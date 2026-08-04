@@ -7,6 +7,13 @@ committed to until Brendan signs off.
 Store confirmed: Very Good Fireplaces (verygoodfireplaces.com), Shopify
 Basic plan, EDT.
 
+**Revision note:** this draft resolves five gaps flagged in review: token
+storage is now a single decision (§3), retry/failure/auth-renewal is now
+a stated policy instead of bare schema columns (§5, new), the job-runner
+choice is justified against a simpler alternative (§3), a rough monthly
+cost estimate is included (§6, new), and in-place editing is now
+explicit about what happens to `status` and `version` on the row (§4).
+
 ---
 
 ## 1. Critique of the plan
@@ -62,7 +69,7 @@ Keep all of that as written.
   single magic-link login restricted to Brendan's email is enough.
 
 **Likely to break against real platform constraints** — covered in depth
-in §6, but the headline: LinkedIn's API is very plausibly not available
+in §8, but the headline: LinkedIn's API is very plausibly not available
 to VGF at all as an individual/small-business developer without a
 registered-entity application; Pinterest requires approval before you
 get even baseline access; Meta's restrictions are probably lighter than
@@ -91,7 +98,7 @@ same-week smoke test to confirm before the build plan depends on it.
   professional-reframe content has value on its own), but V1 ships it as
   "copy to clipboard, mark as posted manually" instead of a live API
   integration. Apply for LinkedIn API access in parallel starting week 1
-  (see §7) — if it comes through, wiring up real publishing later is a
+  (see "What Brendan Must Do" below) — if it comes through, wiring up real publishing later is a
   small addition, not a rebuild, because `platform` is already a clean
   enum/table per the brief's own instruction.
 
@@ -112,15 +119,62 @@ no Kubernetes, no self-managed servers, no separate infra to patch.
 | Hosting | Vercel | Zero-ops deploys, generous headroom for single-user traffic, trivial preview environments |
 | Database | Postgres via Supabase | Managed, near-zero ops; Supabase also bundles Storage and Auth so you're not standing up three separate vendors |
 | File/image storage | Supabase Storage | Generated pin graphics + approved source asset library; served over CDN with no extra setup |
-| Background jobs / scheduling | Trigger.dev (or Inngest) | The workflow is fundamentally async jobs with retries: extract → generate → render → wait until scheduled time → publish → handle expired tokens. Writing that queue/retry/cron logic by hand is exactly the kind of infra a single-user tool shouldn't own; a durable-workflow service gives you retries, scheduling, and observability for free |
+| Background jobs / scheduling | Vercel Cron (5-minute interval, requires Pro plan) polling a Postgres `jobs` table | See justification below — decided against a dedicated workflow vendor |
 | LLM | Claude (Anthropic API) | Extraction, per-platform generation, and a discrete "claim-grounding" pass that checks generated copy against the source article before it reaches review |
 | Image composition | Satori (SVG→PNG) or `@napi-rs/canvas` | Composites approved photos + text overlays into the fixed pin templates server-side; no design-tool dependency |
 | Auth | Supabase Auth, magic link, allow-listed to Brendan's email only | Two minutes to set up, no password to manage, still real auth since this app will hold OAuth tokens |
-| Secrets | Platform OAuth tokens encrypted at rest in Postgres (Supabase Vault or app-level encryption) | Never store raw passwords, per the brief; tokens refreshed server-side |
+| Secrets | Supabase Vault | See justification below — decided, not left open |
 
 Everything here is managed and pay-as-you-go. There is no server to
 patch, no container orchestration, and no on-call surface — the
 maintenance burden is "occasionally update npm packages."
+
+### Decision: Supabase Vault for OAuth tokens (not app-level encryption)
+
+Going with **Supabase Vault**, not "Vault or app-level encryption." The
+practical difference: app-level encryption means writing and maintaining
+encrypt/decrypt code in the app itself, and it means a symmetric key has
+to live *somewhere* — almost always a Vercel environment variable, which
+becomes its own single point of failure and a secret that has to be
+rotated by hand. Vault keeps the encryption inside the database layer,
+tied to Supabase's own project-level key management, so there's no
+separate app secret to manage or leak. Tokens are written via
+`vault.create_secret()` and only ever read back through
+`vault.decrypted_secrets`, from server-side code using the Supabase
+service-role key — the browser/client never has a code path that can
+reach a token, decrypted or not. On refresh, the app calls
+`vault.update_secret()` on the same secret ID rather than writing a new
+row, so `platform_connections` never holds plaintext at rest at any point.
+
+### Decision: Vercel Cron + a jobs table, not Trigger.dev
+
+Trigger.dev (or Inngest) would be justified by *job volume or workflow
+complexity* neither of which is present here. Realistic load: ~2
+articles/week, each producing roughly a dozen jobs (extract, ~8–9
+generation calls, image renders, scheduled publishes) — call it 20–30
+jobs/week total. That's not a scale that needs a dedicated durable-
+execution vendor; it's a scale a five-minute cron tick handles with room
+to spare. Concretely: a Postgres `jobs` table (`id, job_type, payload
+jsonb, run_at, status, attempt_count, last_error, created_at,
+updated_at`) plus one Vercel Cron endpoint that, every 5 minutes, claims
+due rows (`status='pending' AND run_at <= now()`) and executes them. The
+retry/backoff behavior Trigger.dev would give for free is instead
+implemented directly against those columns per the policy in §5 — at
+this volume that's a few `if` statements, not a system. Each pipeline
+step (extract, one generation call, one image render, one publish
+attempt) is its own job row, which also sidesteps Vercel's function
+duration limits by keeping every invocation short instead of one long
+chained function call.
+
+Honest tradeoff: we give up Trigger.dev's dashboard and built-in
+idempotency guarantees. That's mitigated by adding a "Jobs" view to the
+Publish Log screen (§4) that reads the `jobs` table directly — cheap to
+build, and it's the same information. If real usage ever grows past
+"a few articles a week," this is the first piece worth swapping back to
+a managed queue; nothing else in the schema depends on the choice.
+Note this requires the Vercel **Pro** plan regardless — Hobby's cron
+only fires once/day and its function timeout (10s) is too short for an
+LLM call anyway, so Pro is a real cost line either way (see §6).
 
 ---
 
@@ -131,13 +185,14 @@ maintenance burden is "occasionally update npm packages."
 - **`articles`** — `id, shopify_article_id, shopify_blog_id, title, handle, body_html, tags, shopify_updated_at, content_hash, status, fetched_at`. `content_hash` is how we skip no-op re-triggers.
 - **`article_extractions`** — `id, article_id, core_subject, audience, search_intent, key_takeaways (jsonb), supported_claims (jsonb), model_used, created_at`. Kept separate from the raw article so regeneration and auditing don't re-run extraction unnecessarily.
 - **`platform_connections`** — `id, platform (enum: pinterest|linkedin|facebook|instagram), external_account_id, display_name, access_token_enc, refresh_token_enc, scopes, expires_at, status (connected|expired|revoked), created_at`.
-- **`content_items`** — the generated post: `id, article_id, platform, content_type (pinterest_pin|linkedin_post|fb_post|ig_carousel), copy_fields (jsonb), status (draft|in_review|approved|scheduled|published|rejected|failed), version, created_at, updated_at`.
+- **`content_items`** — the generated post: `id, article_id, platform, content_type (pinterest_pin|linkedin_post|fb_post|ig_carousel), copy_fields (jsonb), status (draft|in_review|approved|scheduled|published|rejected|failed), version, created_at, updated_at`. **Editing always updates this row in place** — an inline copy edit, a field regeneration, or a free-text instruction all run `UPDATE content_items SET copy_fields = ..., version = version + 1, updated_at = now() WHERE id = ...`. Nothing is ever inserted as a new row or sent anywhere else; the edited post is the same post, still on the same Review Queue screen, immediately re-viewable. `version` is a plain audit counter (paired with the matching `edit_instructions` row for history), not a re-review gate — editing an `in_review` item leaves it `in_review`. The one status transition that does happen automatically: editing an item that's already `approved` or `scheduled` flips its status back to `in_review` and cancels its pending `publish_targets` row, because content changed after sign-off and it shouldn't auto-publish unreviewed. This is still zero round-trip — it's a filter state on the same screen, not a different queue — but it's a deliberate safety property worth stating rather than leaving to guesswork.
 - **`content_assets`** — `id, content_item_id, source_type (asset_library|rendered_template), source_asset_id?, template_id?, render_params (jsonb: text placement/font/layout), file_url, status, created_at`.
 - **`asset_library`** — the approved-imagery table the brief's workflow currently assumes exists but doesn't define: `id, file_url, tags (text[]), source (shopify_product|manual_upload), shopify_product_id?, uploaded_at, notes`.
-- **`publish_targets`** — per-platform scheduling/outcome for a content item: `id, content_item_id, platform_connection_id, scheduled_at, published_at, external_post_id, external_post_url, status (scheduled|published|failed), error_message, attempt_count`. `scheduled_at` spacing rule for Pinterest: cap N pins/day, evenly spaced across the following 3–5 days rather than a smarter scheduler.
+- **`publish_targets`** — per-platform scheduling/outcome for a content item: `id, content_item_id, platform_connection_id, scheduled_at, published_at, external_post_id, external_post_url, status (scheduled|publishing|published|failed_retrying|failed|canceled), error_message, attempt_count`. `scheduled_at` spacing rule for Pinterest: cap N pins/day, evenly spaced across the following 3–5 days rather than a smarter scheduler. `attempt_count`/`status` are driven by the retry policy in §5, not ad hoc; `canceled` is the state set when a post-approval edit cancels a pending publish (§4 `content_items` note).
 - **`publish_log`** — append-only audit trail: `id, publish_target_id, event_type, detail (jsonb), occurred_at`.
 - **`brand_policies`** — the per-platform/content-type approval policy table called for in the brief: `id, platform, content_type, mode (manual|trusted|autonomous), auto_publish_conditions (jsonb), updated_at`. Every row defaults to `manual` in V1; nothing reads `trusted`/`autonomous` yet, but the shape exists so switching later is a data change, not a migration.
 - **`edit_instructions`** — audit trail for the free-text regeneration box: `id, content_item_id, instruction_text, field_target, applied_at, result_summary`.
+- **`jobs`** — the queue table backing the Vercel Cron runner (§3): `id, job_type (extract_article|generate_content|render_image|publish_post|refresh_token), payload (jsonb), run_at, status (pending|running|succeeded|failed_retryable|failed_final), attempt_count, last_error, created_at, updated_at`. Retry/failure semantics for this table are the policy in §5.
 
 ### Core screens
 
@@ -159,7 +214,77 @@ in Publish Log.
 
 ---
 
-## 5. What requires Brendan vs. what can be built unattended
+## 5. Retry, failure, and auth-renewal policy
+
+The schema has had `attempt_count`/`status` columns since the first
+draft; this is the policy that actually drives them, split by job type
+since "retry a Claude call" and "retry a scheduled publish" have
+different stakes.
+
+**Generation jobs** (`extract_article`, `generate_content`,
+`render_image`): retry transient failures (5xx, timeout, rate-limit)
+up to **3 attempts**, backoff 30s → 2min → 8min. On the 3rd failure, set
+`status='failed_final'`, leave the `content_item` at `draft` (it never
+reaches the review queue half-finished), and surface it as a visible
+error card at the top of the Review Queue grouped under its source
+article — not buried in a log. Non-retryable errors (e.g., a content
+policy refusal from the model) skip straight to `failed_final` after one
+attempt; retrying a rejection doesn't help.
+
+**Publish jobs** (`publish_post`): a scheduled post has slack before
+it's meaningfully "late," so retries are more patient — up to **5
+attempts** over roughly an hour (1min → 5min → 15min → 30min → 60min) on
+retryable errors (5xx, 429, network timeout). Non-retryable errors
+(401/403, validation errors, platform content-policy rejection) fail
+after **1 attempt** — there's no backoff that fixes a bad token or a
+rejected image. If all retries are exhausted, or a `publish_target`
+first became due more than **24 hours ago** and still hasn't succeeded,
+stop auto-retrying and mark `status='failed'` — it needs Brendan's eyes,
+not another silent attempt. This is the one hard rule for what's
+"silent" vs. "surfaced": every retry *inside* the backoff window is
+invisible by design; anything after the last scheduled retry is never
+silent — it always lands as a flagged item in the Publish Log with a
+"needs attention" badge.
+
+**Auth renewal**: on a `401` from any platform, attempt exactly one
+refresh-token exchange. If that succeeds, retry the original call once
+more with the new token (doesn't count against the job's normal retry
+budget). If the refresh itself fails, immediately set
+`platform_connections.status='expired'` — do not keep retrying — and (a)
+pause every pending `publish_target` for that platform (moved to
+`failed_retrying` with `error_message='auth expired'`, not silently
+dropped), and (b) show a persistent banner on the Review Queue and
+Connections screens until Brendan reconnects. Expired auth is exactly
+the kind of exception the brief's Autonomous-mode description calls out
+by name, so this is also the first real exercise of "surface exceptions,"
+even though V1 defaults every policy row to Manual.
+
+---
+
+## 6. Cost estimate
+
+Rough monthly numbers, single-user volume (~2 articles/week):
+
+| Item | Monthly cost | Notes |
+|---|---|---|
+| Vercel Pro | ~$20 | Required regardless of the Trigger.dev decision — Hobby's cron (once/day) and 10s function timeout don't work for this workload |
+| Supabase Pro | ~$25 | Free tier auto-pauses projects after a week of inactivity, which an always-on webhook receiver can't tolerate; Pro also includes backups |
+| Anthropic API usage | ~$5–15 | At ~2 articles/week × ~10 LLM calls/article (extraction + per-platform generation + claim-grounding + a few edit regenerations), token volume is genuinely small — this line is padding for iteration and retries, not the real driver of cost |
+| Domain (optional) | ~$1 (amortized) | Skippable — a `*.vercel.app` subdomain works fine for a single-user internal tool |
+| **Total** | **~$50–60/month** | |
+
+Dropping Trigger.dev removes a third subscription and its own cost line
+(free tier likely covers this volume, but a paid tier would have added
+another $10–25/month once usage grew) without changing the Vercel/
+Supabase numbers above, which are driven by uptime and function limits,
+not by job orchestration. No image-generation API cost, since the brief
+calls for template-composited approved imagery over AI-rendered visuals.
+This is a real new monthly line for the business (~$50–60) — flagging it
+plainly rather than letting it stay implicit across four vendor signups.
+
+---
+
+## 7. What requires Brendan vs. what can be built unattended
 
 **Requires Brendan** (accounts, approvals, credentials, judgment,
 ongoing supply — none of this can be done from inside this session):
@@ -180,8 +305,8 @@ ongoing supply — none of this can be done from inside this session):
   real turnaround time with no approval guarantee.
 - Ongoing: curating and tagging the initial (and continuing) approved
   image library — this is recurring work, not a one-time setup step.
-- Hosting/vendor signups: Vercel, Supabase, Trigger.dev, Anthropic API
-  key, payment methods.
+- Hosting/vendor signups: Vercel (Pro), Supabase (Pro), Anthropic API
+  key, payment methods on each (~$50–60/month combined, see §6).
 - Brand-voice sign-off on the generation prompt before go-live, and
   later judgment calls on when to flip any `brand_policies` row from
   Manual to Trusted.
@@ -195,7 +320,7 @@ scaffolding, and tests.
 
 ---
 
-## 6. Current platform API restrictions (verified, August 2026)
+## 8. Current platform API restrictions (verified, August 2026)
 
 - **Pinterest** — apps must be approved before receiving even baseline
   ("Trial") access; Trial is capped around 1,000 requests/day (300 for
@@ -284,12 +409,15 @@ In order, before implementation can proceed against real APIs:
    of product/installation/manufacturer photos you're comfortable being
    reused across platforms — this seeds the asset library and is the
    one piece of ongoing manual work the system can't do for you.
-7. **Vendor sign-ups**: Vercel, Supabase, Trigger.dev (or Inngest),
-   and an Anthropic API key — accounts + payment method on each.
+7. **Vendor sign-ups**: Vercel (Pro plan), Supabase (Pro plan), and an
+   Anthropic API key — accounts + payment method on each. No Trigger.dev/
+   Inngest signup needed per §3.
 8. **Sign off on this plan** — specifically confirm: (a) Pinterest +
    Meta as the V1 scope with LinkedIn deferred, (b) the fixed-template
-   approach to imagery instead of a full editor, and (c) the tech stack
-   in §3 — before implementation begins.
+   approach to imagery instead of a full editor, (c) the tech stack in
+   §3 including Supabase Vault and Vercel Cron + jobs table, (d) the
+   retry/failure/auth-renewal policy in §5, and (e) the ~$50–60/month
+   cost estimate in §6 — before implementation begins.
 
 ---
 
