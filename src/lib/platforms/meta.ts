@@ -1,4 +1,4 @@
-import { classifyMetaError } from "./errors";
+import { classifyMetaError, PlatformValidationError } from "./errors";
 
 // Meta Graph API (Facebook Pages + Instagram). Request/response shapes
 // follow Meta's public docs; not exercised against a live call in this
@@ -10,8 +10,8 @@ const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
 const OAUTH_AUTHORIZE_URL = `https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth`;
 
 // pages_manage_posts/pages_read_engagement/pages_show_list for Facebook
-// Page posting; instagram_basic/instagram_content_publish so the same
-// connection covers Instagram once its publish handler exists.
+// Page posting; instagram_basic/instagram_content_publish for the
+// Instagram carousel container/publish flow below.
 export const META_SCOPES =
   "pages_manage_posts,pages_read_engagement,pages_show_list,instagram_basic,instagram_content_publish";
 
@@ -35,6 +35,23 @@ async function graphGet<T>(path: string, params: Record<string, string>): Promis
     throw classifyMetaError(response.status, json);
   }
   return json as T;
+}
+
+async function graphPost<T>(path: string, body: Record<string, string>): Promise<T> {
+  const response = await fetch(`${GRAPH_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const json = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw classifyMetaError(response.status, json);
+  }
+  return json as T;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 interface MetaTokenResponse {
@@ -101,16 +118,124 @@ export interface CreatePagePostResult {
 // article's own OG tags, which matches the brief's "light touch,
 // roughly weekly" scope for this platform without needing a compositor.
 export async function createPagePost(pageAccessToken: string, pageId: string, input: CreatePagePostInput): Promise<CreatePagePostResult> {
-  const url = new URL(`${GRAPH_BASE}/${pageId}/feed`);
-  const response = await fetch(url.toString(), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message: input.message, link: input.link, access_token: pageAccessToken }),
+  const { id } = await graphPost<{ id: string }>(`/${pageId}/feed`, {
+    message: input.message,
+    link: input.link,
+    access_token: pageAccessToken,
   });
-  const json = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw classifyMetaError(response.status, json);
-  }
-  const id = (json as { id: string }).id;
   return { id, url: `https://www.facebook.com/${id}` };
+}
+
+// --- Instagram carousel publishing ---
+//
+// The Graph API's content-publishing flow is three steps, not one: (1)
+// create a media *container* per image (async — Instagram fetches and
+// processes the image server-side), (2) once every child container has
+// finished processing, create a parent container of media_type=CAROUSEL
+// referencing them, (3) publish that parent container. A single-image
+// post is the same flow minus step 2. See
+// https://developers.facebook.com/docs/instagram-platform/content-publishing
+
+type ContainerStatus = "IN_PROGRESS" | "FINISHED" | "ERROR" | "EXPIRED" | "PUBLISHED";
+
+async function createMediaContainer(
+  pageAccessToken: string,
+  igUserId: string,
+  input: { imageUrl: string; isCarouselItem?: boolean; caption?: string },
+): Promise<{ id: string }> {
+  const body: Record<string, string> = { image_url: input.imageUrl, access_token: pageAccessToken };
+  if (input.isCarouselItem) body.is_carousel_item = "true";
+  if (input.caption) body.caption = input.caption;
+  return graphPost<{ id: string }>(`/${igUserId}/media`, body);
+}
+
+async function createCarouselContainer(
+  pageAccessToken: string,
+  igUserId: string,
+  input: { caption: string; childrenIds: string[] },
+): Promise<{ id: string }> {
+  return graphPost<{ id: string }>(`/${igUserId}/media`, {
+    media_type: "CAROUSEL",
+    caption: input.caption,
+    children: input.childrenIds.join(","),
+    access_token: pageAccessToken,
+  });
+}
+
+async function getContainerStatus(pageAccessToken: string, containerId: string): Promise<ContainerStatus> {
+  const { status_code } = await graphGet<{ status_code: ContainerStatus }>(`/${containerId}`, {
+    fields: "status_code",
+    access_token: pageAccessToken,
+  });
+  return status_code;
+}
+
+// Polls a container until Instagram finishes processing the image
+// (typically a few seconds). Publishing before FINISHED reliably fails,
+// so this is not optional — but it's a short, bounded wait, not a
+// background job, since containers are per-image and process fast.
+async function waitForContainerReady(
+  pageAccessToken: string,
+  containerId: string,
+  { maxAttempts = 10, delayMs = 1500 }: { maxAttempts?: number; delayMs?: number } = {},
+): Promise<void> {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const status = await getContainerStatus(pageAccessToken, containerId);
+    if (status === "FINISHED") return;
+    if (status === "ERROR" || status === "EXPIRED") {
+      throw new PlatformValidationError(`Instagram media container ${containerId} failed to process (status=${status})`);
+    }
+    await sleep(delayMs);
+  }
+  throw new Error(`Instagram media container ${containerId} did not finish processing in time`); // retryable — likely transient
+}
+
+async function publishMediaContainer(pageAccessToken: string, igUserId: string, creationId: string): Promise<{ id: string }> {
+  return graphPost<{ id: string }>(`/${igUserId}/media_publish`, { creation_id: creationId, access_token: pageAccessToken });
+}
+
+async function getMediaPermalink(pageAccessToken: string, mediaId: string): Promise<string> {
+  const { permalink } = await graphGet<{ permalink: string }>(`/${mediaId}`, {
+    fields: "permalink",
+    access_token: pageAccessToken,
+  });
+  return permalink;
+}
+
+export interface CreateInstagramCarouselInput {
+  caption: string;
+  imageUrls: string[];
+}
+
+export interface CreateInstagramCarouselResult {
+  id: string;
+  url: string;
+}
+
+// Orchestrates the full three-step flow above for a multi-slide
+// carousel. Children are created and confirmed ready sequentially
+// (not in parallel) so a mid-carousel failure doesn't leave orphaned
+// containers racing an already-thrown error.
+export async function createInstagramCarousel(
+  pageAccessToken: string,
+  igUserId: string,
+  input: CreateInstagramCarouselInput,
+): Promise<CreateInstagramCarouselResult> {
+  if (input.imageUrls.length < 2) {
+    throw new PlatformValidationError("Instagram carousel needs at least 2 images");
+  }
+
+  const childrenIds: string[] = [];
+  for (const imageUrl of input.imageUrls) {
+    const container = await createMediaContainer(pageAccessToken, igUserId, { imageUrl, isCarouselItem: true });
+    await waitForContainerReady(pageAccessToken, container.id);
+    childrenIds.push(container.id);
+  }
+
+  const carousel = await createCarouselContainer(pageAccessToken, igUserId, { caption: input.caption, childrenIds });
+  await waitForContainerReady(pageAccessToken, carousel.id);
+
+  const published = await publishMediaContainer(pageAccessToken, igUserId, carousel.id);
+  const url = await getMediaPermalink(pageAccessToken, published.id);
+  return { id: published.id, url };
 }

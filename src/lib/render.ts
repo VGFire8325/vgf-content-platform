@@ -10,6 +10,7 @@ import {
   type PinterestTemplateId,
   type PinterestTemplateProps,
 } from "./templates/pinterest";
+import { INSTAGRAM_SLIDE_SIZE, instagramSlide, type InstagramSlideProps } from "./templates/instagram";
 
 // Liberation Sans — SIL Open Font License, freely redistributable.
 // Placeholder until Brendan supplies VGF's real brand font; nothing else
@@ -41,6 +42,17 @@ export async function renderPinterestPin(
     fonts: loadFonts(),
   });
   const resvg = new Resvg(svg, { fitTo: { mode: "width", value: PINTEREST_PIN_WIDTH } });
+  return resvg.render().asPng();
+}
+
+export async function renderInstagramSlide(props: InstagramSlideProps): Promise<Buffer> {
+  const jsx = instagramSlide(props) as ReactNode;
+  const svg = await satori(jsx, {
+    width: INSTAGRAM_SLIDE_SIZE,
+    height: INSTAGRAM_SLIDE_SIZE,
+    fonts: loadFonts(),
+  });
+  const resvg = new Resvg(svg, { fitTo: { mode: "width", value: INSTAGRAM_SLIDE_SIZE } });
   return resvg.render().asPng();
 }
 

@@ -17,10 +17,10 @@ import { requireEnv } from "@/lib/env";
 import { CONTENT_TYPE_BY_PLATFORM, generatePlatformContent, groundPosts } from "@/lib/generation";
 import { claimDueJobs, enqueueJob, markJobFailed, markJobSucceeded } from "@/lib/jobs";
 import { PlatformAuthError, PlatformValidationError } from "@/lib/platforms/errors";
-import { createPagePost, refreshMetaUserToken } from "@/lib/platforms/meta";
+import { createInstagramCarousel, createPagePost, refreshMetaUserToken } from "@/lib/platforms/meta";
 import { createPin, findOrCreateBoard, refreshPinterestToken } from "@/lib/platforms/pinterest";
-import { selectAssetForArticle } from "@/lib/assets";
-import { renderPinterestPin, resolveImageSrc } from "@/lib/render";
+import { selectAssetForArticle, selectAssetsForArticle } from "@/lib/assets";
+import { renderInstagramSlide, renderPinterestPin, resolveImageSrc } from "@/lib/render";
 import type { PinterestTemplateId } from "@/lib/templates/pinterest";
 import { uploadRenderedImage } from "@/lib/storage";
 import { readSecret, updateSecret } from "@/lib/vault";
@@ -121,31 +121,21 @@ async function runGenerateContent(job: Job) {
     )
     .returning();
 
-  // Only Pinterest has a template/compositor implemented so far — see
-  // runRenderImage below. Other platforms' visual concepts stay
-  // text-only in copyFields until their templates exist.
-  if (platform === "pinterest") {
+  // Only Pinterest and Instagram have templates/compositors implemented
+  // so far — see runRenderImage below. Facebook and LinkedIn's visual
+  // concepts stay text-only in copyFields (Facebook doesn't need a
+  // rendered image at all; LinkedIn has no publish path yet in V1).
+  if (platform === "pinterest" || platform === "instagram") {
     for (const row of insertedItems) {
       await enqueueJob(db, "render_image", { contentItemId: row.id });
     }
   }
 }
 
-async function runRenderImage(job: Job) {
-  const { contentItemId, templateId } = job.payload as { contentItemId: string; templateId?: PinterestTemplateId };
-  const [item] = await db.select().from(contentItems).where(eq(contentItems.id, contentItemId)).limit(1);
-  if (!item) {
-    throw new NonRetryableJobError(`content_item ${contentItemId} not found`);
-  }
-  if (item.platform !== "pinterest" || item.contentType !== "pinterest_pin") {
-    throw new NonRetryableJobError(`render_image has no template for ${item.platform}/${item.contentType} yet`);
-  }
+type ContentItemRow = typeof contentItems.$inferSelect;
+type ArticleRow = typeof articles.$inferSelect;
 
-  const [article] = await db.select().from(articles).where(eq(articles.id, item.articleId)).limit(1);
-  if (!article) {
-    throw new NonRetryableJobError(`article ${item.articleId} not found`);
-  }
-
+async function renderPinterestPinItem(item: ContentItemRow, article: ArticleRow, templateId?: PinterestTemplateId) {
   const chosenTemplateId: PinterestTemplateId = templateId ?? "photo-full-bleed";
   const asset = await selectAssetForArticle(db, article.tags);
 
@@ -181,6 +171,64 @@ async function runRenderImage(job: Job) {
     fileUrl,
     status: "rendered",
   });
+}
+
+async function renderInstagramCarouselItem(item: ContentItemRow, article: ArticleRow) {
+  const copy = item.copyFields as { caption: string; slides: string[] };
+  const assets = await selectAssetsForArticle(db, article.tags, copy.slides.length);
+
+  if (assets.length === 0) {
+    // Same brand rule as Pinterest: no approved photo for this article
+    // means "needs an approved photo," never an AI-rendered stand-in.
+    await db.insert(contentAssets).values({
+      contentItemId: item.id,
+      sourceType: "asset_library",
+      status: "needs_asset",
+    });
+    return;
+  }
+
+  // Fewer approved photos than slides is common (the library starts
+  // thin) — cycle through what's available rather than failing, so a
+  // 5-slide carousel with 2 matching photos still renders instead of
+  // getting stuck behind a library gap.
+  for (let i = 0; i < copy.slides.length; i++) {
+    const asset = assets[i % assets.length]!;
+    const slideText = copy.slides[i]!;
+    const imageSrc = await resolveImageSrc(asset.fileUrl);
+    const png = await renderInstagramSlide({ slideText, imageSrc, slideIndex: i, slideCount: copy.slides.length });
+    const fileUrl = await uploadRenderedImage(png, `instagram/${item.id}-${i}-${Date.now()}.png`);
+
+    await db.insert(contentAssets).values({
+      contentItemId: item.id,
+      sourceType: "asset_library",
+      sourceAssetId: asset.id,
+      renderParams: { slideIndex: i, slideText },
+      fileUrl,
+      status: "rendered",
+    });
+  }
+}
+
+async function runRenderImage(job: Job) {
+  const { contentItemId, templateId } = job.payload as { contentItemId: string; templateId?: PinterestTemplateId };
+  const [item] = await db.select().from(contentItems).where(eq(contentItems.id, contentItemId)).limit(1);
+  if (!item) {
+    throw new NonRetryableJobError(`content_item ${contentItemId} not found`);
+  }
+
+  const [article] = await db.select().from(articles).where(eq(articles.id, item.articleId)).limit(1);
+  if (!article) {
+    throw new NonRetryableJobError(`article ${item.articleId} not found`);
+  }
+
+  if (item.platform === "pinterest" && item.contentType === "pinterest_pin") {
+    return renderPinterestPinItem(item, article, templateId);
+  }
+  if (item.platform === "instagram" && item.contentType === "ig_carousel") {
+    return renderInstagramCarouselItem(item, article);
+  }
+  throw new NonRetryableJobError(`render_image has no template for ${item.platform}/${item.contentType} yet`);
 }
 
 type PlatformConnectionRow = typeof platformConnections.$inferSelect;
@@ -244,6 +292,23 @@ async function runPublishPost(job: Job) {
     return; // edited after scheduling — nothing to publish, not an error
   }
 
+  // §5: independent of the job-level attempt budget, a publish_target
+  // that's been due for over 24 hours without succeeding stops
+  // auto-retrying — it needs Brendan's eyes, not another silent attempt.
+  const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+  if (Date.now() - target.scheduledAt.getTime() > STALE_AFTER_MS) {
+    await db
+      .update(publishTargets)
+      .set({ status: "failed", errorMessage: "Stale: still unpublished 24h after its scheduled time" })
+      .where(eq(publishTargets.id, target.id));
+    await db.insert(publishLog).values({
+      publishTargetId: target.id,
+      eventType: "failed",
+      detail: { reason: "stale_over_24h" },
+    });
+    throw new NonRetryableJobError("publish_target stale (>24h past scheduled_at) — marked failed, needs attention");
+  }
+
   const [item] = await db.select().from(contentItems).where(eq(contentItems.id, target.contentItemId)).limit(1);
   if (!item) throw new NonRetryableJobError(`content_item ${target.contentItemId} not found`);
   const [article] = await db.select().from(articles).where(eq(articles.id, item.articleId)).limit(1);
@@ -278,6 +343,24 @@ async function runPublishPost(job: Job) {
     if (item.platform === "facebook") {
       const copy = item.copyFields as { postText: string };
       return createPagePost(accessToken, connection.externalAccountId, { message: copy.postText, link });
+    }
+    if (item.platform === "instagram") {
+      const renderedAssets = await db
+        .select()
+        .from(contentAssets)
+        .where(and(eq(contentAssets.contentItemId, item.id), eq(contentAssets.status, "rendered")));
+      if (renderedAssets.length === 0) {
+        throw new NonRetryableJobError("No rendered slides for this carousel yet — publish ran before render_image finished");
+      }
+      const copy = item.copyFields as { caption: string };
+      const imageUrls = renderedAssets
+        .sort((a, b) => {
+          const ai = (a.renderParams as { slideIndex?: number } | null)?.slideIndex ?? 0;
+          const bi = (b.renderParams as { slideIndex?: number } | null)?.slideIndex ?? 0;
+          return ai - bi;
+        })
+        .map((a) => a.fileUrl!);
+      return createInstagramCarousel(accessToken, connection.externalAccountId, { caption: copy.caption, imageUrls });
     }
     throw new NonRetryableJobError(`publish_post not implemented for ${item.platform} yet`);
   };
