@@ -9,9 +9,18 @@ Full architecture, schema rationale, retry/cost/security decisions:
 
 ## Status
 
-Phase 1, milestone 1 (schema in place) is done. Not yet built: the
-Shopify ingestion endpoint, the generation pipeline, the review UI, and
-the platform publishers.
+Phase 1, milestones 1–2 done:
+
+1. Schema in place (all 11 tables from the plan, migration generated and verified).
+2. Shopify ingestion + extraction pipeline: webhook receiver (`/api/webhooks/shopify/articles`), content-hash dedup, job queue (`jobs` table with `SKIP LOCKED` claiming), a Vercel Cron runner (`/api/cron/run-jobs`) implementing the §5 retry/backoff policy, and the `extract_article` job (Claude call → structured extraction → `article_extractions`). Covered by unit tests (`npm test`) for HMAC verification, content hashing, and the extraction schema.
+
+Not yet built: per-platform content generation, the image compositor,
+the review UI, and the platform publishers.
+
+Verified locally without live credentials: `npm run typecheck`,
+`npx next build`, and `npm test` all pass. Nothing has been run against
+a real database or the live Anthropic API yet — that needs the Supabase
+project and Anthropic key from "What Brendan Must Do".
 
 ## Stack
 
@@ -43,6 +52,11 @@ via API from this session:
 - Pinterest and Meta developer apps (§8 of the plan covers what each
   requires and current approval friction).
 - An Anthropic API key.
+- Once deployed, a webhook subscription pointing at
+  `https://<your-deployment>/api/webhooks/shopify/articles` for the
+  `articles/create` and `articles/update` topics (Shopify admin →
+  Settings → Notifications → Webhooks, or via `webhookSubscriptionCreate`
+  once a real endpoint exists to point at).
 
 The read-only Shopify access already available to this session (via the
 Shopify MCP connector) was used to confirm the store's blog structure

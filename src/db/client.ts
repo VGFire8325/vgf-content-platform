@@ -2,13 +2,27 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "./schema";
 
-// DATABASE_URL is the Supabase connection string (pooled, port 6543 for
-// serverless/edge; direct 5432 connection for migrations). Server-side
-// only — never exposed to the client bundle.
-const connectionString = process.env.DATABASE_URL;
-if (!connectionString) {
-  throw new Error("DATABASE_URL is not set");
+// Lazy on purpose: Next.js imports every route module during build-time
+// page-data collection, which must succeed without real secrets present.
+// The connection (and the "DATABASE_URL is not set" check) only happens
+// on first actual query, at request time.
+type Db = ReturnType<typeof drizzle<typeof schema>>;
+let _db: Db | null = null;
+
+function getDb(): Db {
+  if (!_db) {
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString) {
+      throw new Error("DATABASE_URL is not set");
+    }
+    const client = postgres(connectionString, { prepare: false });
+    _db = drizzle(client, { schema });
+  }
+  return _db;
 }
 
-const client = postgres(connectionString, { prepare: false });
-export const db = drizzle(client, { schema });
+export const db: Db = new Proxy({} as Db, {
+  get(_target, prop, receiver) {
+    return Reflect.get(getDb() as object, prop, receiver);
+  },
+});
