@@ -81,10 +81,8 @@ via API from this session:
 - A **Shopify custom app**, created in the [Dev Dashboard](https://dev.shopify.com/dashboard)
   (not the old Settings → Apps → Develop apps flow — Shopify stopped
   issuing a static Admin API token from the admin for new apps as of
-  Jan 1, 2026). Configure `read_content` as an Admin API scope, note the
-  app's Client ID/Secret for `SHOPIFY_CLIENT_ID` / `SHOPIFY_CLIENT_SECRET`,
-  and register `${APP_BASE_URL}/api/oauth/shopify/callback` as the
-  redirect URL. `SHOPIFY_MYSHOPIFY_DOMAIN` is the store's real
+  Jan 1, 2026). Note the app's Client ID/Secret for `SHOPIFY_CLIENT_ID` /
+  `SHOPIFY_CLIENT_SECRET`. `SHOPIFY_MYSHOPIFY_DOMAIN` is the store's real
   `*.myshopify.com` admin domain (not the custom domain), and
   `SHOPIFY_WEBHOOK_SECRET` is set separately, same as before. This app
   runs the standard OAuth authorization code grant itself to get its
@@ -95,6 +93,23 @@ via API from this session:
   expose an API to create a new app with its own credentials — this
   step requires a few minutes in the Dev Dashboard regardless of what
   access this project already has.
+
+  App config (Admin API scope, application URL, OAuth redirect URL, and
+  the `articles/create`/`articles/update` webhook subscription) is
+  declared as code in [`shopify.app.toml`](./shopify.app.toml) rather
+  than clicked through the dashboard, so it stays in the same repo and
+  under version control. Fill in the real `client_id` (run
+  `shopify app config link` to pull it down, or paste it directly — it's
+  not secret), then push it live:
+  ```bash
+  npx shopify auth login
+  npx shopify app deploy
+  ```
+  This requires an interactive browser login to the Partner/Dev
+  Dashboard account that owns the app — not something that can be done
+  from an unattended session. Re-run `shopify app deploy` any time
+  `shopify.app.toml` changes (e.g. the deployment URL changes, or a new
+  webhook topic is added).
 - Pinterest and Meta developer apps (§8 of the plan covers what each
   requires and current approval friction), each with their OAuth redirect
   URI registered as `${APP_BASE_URL}/api/oauth/pinterest/callback` and
@@ -108,11 +123,9 @@ via API from this session:
   tagged so they overlap the tags on the articles they should illustrate
   — without at least one tag match, `render_image` intentionally leaves
   a pin flagged `needs_asset` instead of guessing.
-- Once deployed, a webhook subscription pointing at
-  `https://<your-deployment>/api/webhooks/shopify/articles` for the
-  `articles/create` and `articles/update` topics (Shopify admin →
-  Settings → Notifications → Webhooks, or via `webhookSubscriptionCreate`
-  once a real endpoint exists to point at).
+- The `articles/create`/`articles/update` webhook subscription itself
+  doesn't need a separate manual step — it's declared in
+  `shopify.app.toml` above and created by `shopify app deploy`.
 
 The read-only Shopify access already available to this session (via the
 Shopify MCP connector) was used to confirm the store's blog structure

@@ -1,0 +1,36 @@
+# Config-as-code for the Shopify Dev Dashboard custom app this project
+# connects to via OAuth (see src/lib/platforms/shopify.ts and
+# app/api/oauth/shopify/*). This app is headless/backend-only — it has
+# no embedded admin UI, just the read-only Admin API access + webhook
+# subscription the ingestion pipeline needs — so there are no
+# extensions and `embedded = false`.
+#
+# client_id below is a placeholder: this file was authored without
+# access to the real Dev Dashboard app, so it can't be pulled down
+# automatically. Fill it in with the app's real Client ID (not secret —
+# safe to commit), or run `shopify app config link` first to pull the
+# actual current config down over this file, then re-apply the
+# application_url/redirect_urls values below if that overwrites them.
+#
+# See docs/PHASE_0_PLAN.md and README.md "What has to exist before this
+# runs against real data" for the full setup context.
+
+name = "VGF Content Distribution"
+client_id = "REPLACE_WITH_REAL_CLIENT_ID"
+application_url = "https://vgf-content-platform.vercel.app"
+embedded = false
+
+[access_scopes]
+# Read-only — this app only ever reads blog articles, never writes to
+# the store. Matches SHOPIFY_SCOPES in src/lib/platforms/shopify.ts.
+scopes = "read_content"
+
+[auth]
+redirect_urls = ["https://vgf-content-platform.vercel.app/api/oauth/shopify/callback"]
+
+[webhooks]
+api_version = "2026-04"
+
+  [[webhooks.subscriptions]]
+  topics = ["articles/create", "articles/update"]
+  uri = "/api/webhooks/shopify/articles"
