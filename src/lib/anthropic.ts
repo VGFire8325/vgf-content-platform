@@ -1,7 +1,49 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 
-const MODEL = "claude-sonnet-5";
+export const MODEL = "claude-sonnet-5";
+
+export const BRAND_CORE = `Very Good Fireplaces is an electric fireplace ecommerce business. Brand
+rule for all content: teach first, sell second — answer real questions
+homeowners, builders, contractors, and designers actually have. No
+engagement bait, no "here's a fireplace, check it out" posts, no
+unsupported technical claims. Ground every claim in the material
+provided below; never assert a claim that isn't explicitly listed as
+supported.`;
+
+export function createAnthropicClient(apiKey: string) {
+  return new Anthropic({ apiKey });
+}
+
+// Forces a single tool call and validates its input against `schema`,
+// shared by extraction, generation, and grounding — all of which need
+// "call this exact tool, then trust nothing until it's parsed."
+export async function callStructuredTool<T>(
+  client: Anthropic,
+  options: {
+    system: string;
+    userContent: string;
+    tool: Anthropic.Tool;
+    schema: z.ZodType<T>;
+    maxTokens?: number;
+  },
+): Promise<T> {
+  const response = await client.messages.create({
+    model: MODEL,
+    max_tokens: options.maxTokens ?? 2048,
+    system: options.system,
+    tools: [options.tool],
+    tool_choice: { type: "tool", name: options.tool.name },
+    messages: [{ role: "user", content: options.userContent }],
+  });
+
+  const toolUse = response.content.find((block) => block.type === "tool_use");
+  if (!toolUse || toolUse.type !== "tool_use") {
+    throw new Error(`Model did not return a '${options.tool.name}' tool call`);
+  }
+
+  return options.schema.parse(toolUse.input);
+}
 
 export const extractionSchema = z.object({
   coreSubject: z.string().min(1),
@@ -13,13 +55,10 @@ export const extractionSchema = z.object({
 
 export type Extraction = z.infer<typeof extractionSchema>;
 
-const BRAND_PROMPT = `You are analyzing a blog article for Very Good Fireplaces, an electric
-fireplace ecommerce business. The brand rule for all downstream content:
-teach first, sell second — answer real questions homeowners, builders,
-contractors, and designers have. No engagement bait, no unsupported
-technical claims.
+const EXTRACTION_SYSTEM_PROMPT = `${BRAND_CORE}
 
-Extract, from this article only:
+You are analyzing one article to prepare it for downstream content
+generation. Extract, from this article only:
 - coreSubject: the single main topic, one sentence.
 - audience: who this article is actually written for (homeowner,
   contractor, designer, etc.) — be specific, not "everyone."
@@ -29,7 +68,7 @@ Extract, from this article only:
   makes and directly supports (specs, installation requirements,
   comparisons). Only include claims with clear textual support — this
   list is what later generation steps are allowed to assert; anything
-  not listed here should be treated as ungrounded.`;
+  not listed here is ungrounded.`;
 
 const RECORD_EXTRACTION_TOOL: Anthropic.Tool = {
   name: "record_extraction",
@@ -52,28 +91,10 @@ export async function extractArticle(
   articleTitle: string,
   articleBodyHtml: string,
 ): Promise<Extraction> {
-  const response = await client.messages.create({
-    model: MODEL,
-    max_tokens: 2048,
-    system: BRAND_PROMPT,
-    tools: [RECORD_EXTRACTION_TOOL],
-    tool_choice: { type: "tool", name: "record_extraction" },
-    messages: [
-      {
-        role: "user",
-        content: `Article title: ${articleTitle}\n\nArticle body (HTML):\n${articleBodyHtml}`,
-      },
-    ],
+  return callStructuredTool(client, {
+    system: EXTRACTION_SYSTEM_PROMPT,
+    userContent: `Article title: ${articleTitle}\n\nArticle body (HTML):\n${articleBodyHtml}`,
+    tool: RECORD_EXTRACTION_TOOL,
+    schema: extractionSchema,
   });
-
-  const toolUse = response.content.find((block) => block.type === "tool_use");
-  if (!toolUse || toolUse.type !== "tool_use") {
-    throw new Error("Model did not return a record_extraction tool call");
-  }
-
-  return extractionSchema.parse(toolUse.input);
-}
-
-export function createAnthropicClient(apiKey: string) {
-  return new Anthropic({ apiKey });
 }

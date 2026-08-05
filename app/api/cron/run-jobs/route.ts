@@ -1,15 +1,17 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
-import { articleExtractions, articles, jobs } from "@/db/schema";
+import { articleExtractions, articles, contentItems, jobs, platformEnum } from "@/db/schema";
 import { createAnthropicClient, extractArticle } from "@/lib/anthropic";
 import { requireEnv } from "@/lib/env";
-import { claimDueJobs, markJobFailed, markJobSucceeded } from "@/lib/jobs";
+import { CONTENT_TYPE_BY_PLATFORM, generatePlatformContent, groundPosts } from "@/lib/generation";
+import { claimDueJobs, enqueueJob, markJobFailed, markJobSucceeded } from "@/lib/jobs";
 
 export const runtime = "nodejs";
 
 class NonRetryableJobError extends Error {}
 
 type Job = typeof jobs.$inferSelect;
+type Platform = (typeof platformEnum.enumValues)[number];
 
 async function runExtractArticle(job: Job) {
   const { articleId } = job.payload as { articleId: string };
@@ -22,16 +24,80 @@ async function runExtractArticle(job: Job) {
   const client = createAnthropicClient(ANTHROPIC_API_KEY);
   const extraction = await extractArticle(client, article.title, article.bodyHtml);
 
-  await db.insert(articleExtractions).values({
-    articleId: article.id,
+  const [inserted] = await db
+    .insert(articleExtractions)
+    .values({
+      articleId: article.id,
+      coreSubject: extraction.coreSubject,
+      audience: extraction.audience,
+      searchIntent: extraction.searchIntent,
+      keyTakeaways: extraction.keyTakeaways,
+      supportedClaims: extraction.supportedClaims,
+      modelUsed: "claude-sonnet-5",
+    })
+    .returning();
+  if (!inserted) {
+    throw new Error("Insert into article_extractions returned no row");
+  }
+  await db.update(articles).set({ status: "processed" }).where(eq(articles.id, article.id));
+
+  // Fan out one generate_content job per platform — copy generation for
+  // all four happens regardless of which platforms can auto-publish yet
+  // (LinkedIn copy still has value even though V1 publishes it manually,
+  // per docs/PHASE_0_PLAN.md §2).
+  for (const platform of platformEnum.enumValues) {
+    await enqueueJob(db, "generate_content", { articleId: article.id, extractionId: inserted.id, platform });
+  }
+}
+
+async function runGenerateContent(job: Job) {
+  const { articleId, extractionId, platform } = job.payload as {
+    articleId: string;
+    extractionId: string;
+    platform: Platform;
+  };
+
+  const [article] = await db.select().from(articles).where(eq(articles.id, articleId)).limit(1);
+  if (!article) {
+    throw new NonRetryableJobError(`Article ${articleId} not found`);
+  }
+  const [extraction] = await db
+    .select()
+    .from(articleExtractions)
+    .where(eq(articleExtractions.id, extractionId))
+    .limit(1);
+  if (!extraction) {
+    throw new NonRetryableJobError(`Extraction ${extractionId} not found`);
+  }
+
+  const { ANTHROPIC_API_KEY } = requireEnv("ANTHROPIC_API_KEY");
+  const client = createAnthropicClient(ANTHROPIC_API_KEY);
+
+  const posts = await generatePlatformContent(client, platform, article.title, {
     coreSubject: extraction.coreSubject,
     audience: extraction.audience,
     searchIntent: extraction.searchIntent,
-    keyTakeaways: extraction.keyTakeaways,
-    supportedClaims: extraction.supportedClaims,
-    modelUsed: "claude-sonnet-5",
+    keyTakeaways: extraction.keyTakeaways as string[],
+    supportedClaims: extraction.supportedClaims as string[],
   });
-  await db.update(articles).set({ status: "processed" }).where(eq(articles.id, article.id));
+
+  const flaggedClaimsByPost = await groundPosts(
+    client,
+    platform,
+    posts,
+    extraction.supportedClaims as string[],
+  );
+
+  const contentType = CONTENT_TYPE_BY_PLATFORM[platform];
+  await db.insert(contentItems).values(
+    posts.map((post, i) => ({
+      articleId: article.id,
+      platform,
+      contentType,
+      copyFields: { ...post, flaggedClaims: flaggedClaimsByPost[i] ?? [] },
+      status: "in_review" as const,
+    })),
+  );
 }
 
 async function dispatch(job: Job) {
@@ -39,6 +105,7 @@ async function dispatch(job: Job) {
     case "extract_article":
       return runExtractArticle(job);
     case "generate_content":
+      return runGenerateContent(job);
     case "render_image":
     case "publish_post":
     case "refresh_token":
