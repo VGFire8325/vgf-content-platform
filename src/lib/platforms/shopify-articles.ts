@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import type { db as DbClient } from "@/db/client";
-import { articles } from "@/db/schema";
+import { articles, syncCursors } from "@/db/schema";
 import { hashArticleContent } from "@/lib/hash";
 import { enqueueJob } from "@/lib/jobs";
 
@@ -50,9 +50,34 @@ function parseNextLink(linkHeader: string | null): string | null {
   return null;
 }
 
-export async function fetchAllArticles(shopDomain: string, accessToken: string, blogId: number): Promise<ShopifyArticle[]> {
+export async function fetchArticleById(
+  shopDomain: string,
+  accessToken: string,
+  blogId: number,
+  articleId: number,
+): Promise<ShopifyArticle> {
+  const response = await fetch(`https://${shopDomain}/admin/api/${API_VERSION}/blogs/${blogId}/articles/${articleId}.json`, {
+    headers: { "X-Shopify-Access-Token": accessToken },
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch article ${articleId}: HTTP ${response.status} ${await response.text()}`);
+  }
+  const json = (await response.json()) as { article: unknown };
+  return shopifyArticleSchema.parse(json.article);
+}
+
+// updatedAtMin scopes the fetch to articles Shopify reports changed
+// after that point — see syncCursors: the daily poll uses this to
+// avoid re-scanning the whole blog once a cutoff has been established.
+export async function fetchAllArticles(
+  shopDomain: string,
+  accessToken: string,
+  blogId: number,
+  updatedAtMin?: Date,
+): Promise<ShopifyArticle[]> {
   const results: ShopifyArticle[] = [];
-  let url: string | null = `https://${shopDomain}/admin/api/${API_VERSION}/blogs/${blogId}/articles.json?limit=250`;
+  const minParam = updatedAtMin ? `&updated_at_min=${encodeURIComponent(updatedAtMin.toISOString())}` : "";
+  let url: string | null = `https://${shopDomain}/admin/api/${API_VERSION}/blogs/${blogId}/articles.json?limit=250${minParam}`;
 
   while (url) {
     const response: Response = await fetch(url, { headers: { "X-Shopify-Access-Token": accessToken } });
@@ -141,4 +166,23 @@ export async function syncArticleFromShopify(db: typeof DbClient, payload: Shopi
     .where(eq(articles.id, existing.id));
   await enqueueJob(db, "extract_article", { articleId: existing.id });
   return { status: "updated", articleId: existing.id, extractionQueued: true };
+}
+
+const SHOPIFY_ARTICLES_CURSOR_KEY = "shopify_articles";
+
+// Null means no cutoff has been set yet — the caller should treat that
+// as "fetch everything" (first-ever poll, or before any manual seed).
+export async function getShopifyArticlesCutoff(db: typeof DbClient): Promise<Date | null> {
+  const [row] = await db.select().from(syncCursors).where(eq(syncCursors.key, SHOPIFY_ARTICLES_CURSOR_KEY)).limit(1);
+  return row?.cutoff ?? null;
+}
+
+export async function setShopifyArticlesCutoff(db: typeof DbClient, cutoff: Date): Promise<void> {
+  await db
+    .insert(syncCursors)
+    .values({ key: SHOPIFY_ARTICLES_CURSOR_KEY, cutoff, updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: syncCursors.key,
+      set: { cutoff, updatedAt: new Date() },
+    });
 }

@@ -241,6 +241,18 @@ export const shopifyConnection = pgTable("shopify_connection", {
   connectedAt: timestamp("connected_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Single-row-per-key cursor store. Currently just one row
+// ("shopify_articles"): when set, /api/cron/poll-shopify-articles only
+// fetches articles Shopify reports as updated after this timestamp,
+// instead of re-scanning the whole blog every day. Null means "no
+// cutoff yet" (full backfill) — the state before any manual seed or
+// first-ever poll has run.
+export const syncCursors = pgTable("sync_cursors", {
+  key: text("key").primaryKey(),
+  cutoff: timestamp("cutoff", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const jobs = pgTable("jobs", {
   id: uuid("id").primaryKey().defaultRandom(),
   jobType: jobTypeEnum("job_type").notNull(),

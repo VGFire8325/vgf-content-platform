@@ -1,7 +1,13 @@
 import { db } from "@/db/client";
 import { shopifyConnection } from "@/db/schema";
 import { requireEnv } from "@/lib/env";
-import { fetchAllArticles, fetchShopifyBlogId, syncArticleFromShopify } from "@/lib/platforms/shopify-articles";
+import {
+  fetchAllArticles,
+  fetchShopifyBlogId,
+  getShopifyArticlesCutoff,
+  setShopifyArticlesCutoff,
+  syncArticleFromShopify,
+} from "@/lib/platforms/shopify-articles";
 import { readSecret } from "@/lib/vault";
 
 export const runtime = "nodejs";
@@ -27,13 +33,21 @@ export async function GET(request: Request) {
 
   const accessToken = await readSecret(db, connection.accessTokenVaultId);
   const blogId = await fetchShopifyBlogId(connection.shopDomain, accessToken, SHOPIFY_BLOG_HANDLE);
-  const shopifyArticles = await fetchAllArticles(connection.shopDomain, accessToken, blogId);
+
+  // Captured before fetching, not after, so an article edited mid-run
+  // still gets picked up by tomorrow's poll instead of falling in the
+  // gap between "when we started reading" and "when we finished."
+  const runStartedAt = new Date();
+  const cutoff = await getShopifyArticlesCutoff(db);
+  const shopifyArticles = await fetchAllArticles(connection.shopDomain, accessToken, blogId, cutoff ?? undefined);
 
   const results = { checked: shopifyArticles.length, created: 0, updated: 0, unchanged: 0 };
   for (const article of shopifyArticles) {
     const { status } = await syncArticleFromShopify(db, article);
     results[status]++;
   }
+
+  await setShopifyArticlesCutoff(db, runStartedAt);
 
   return Response.json(results);
 }
