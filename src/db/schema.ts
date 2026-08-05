@@ -226,6 +226,21 @@ export const editInstructions = pgTable("edit_instructions", {
   resultSummary: text("result_summary"),
 });
 
+// Single-row-in-practice table for the store's own OAuth connection —
+// distinct from platform_connections, which models publish-destination
+// accounts (Pinterest/Meta/LinkedIn). Shopify changed how custom apps
+// get their Admin API credentials on Jan 1, 2026: apps created in the
+// new Dev Dashboard no longer receive a static token from the admin —
+// this app must complete the authorization code grant itself and store
+// the resulting token, same Vault pattern as platform_connections.
+export const shopifyConnection = pgTable("shopify_connection", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  shopDomain: text("shop_domain").notNull(), // the {handle}.myshopify.com domain
+  accessTokenVaultId: uuid("access_token_vault_id").notNull(),
+  scope: text("scope").notNull(),
+  connectedAt: timestamp("connected_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const jobs = pgTable("jobs", {
   id: uuid("id").primaryKey().defaultRandom(),
   jobType: jobTypeEnum("job_type").notNull(),

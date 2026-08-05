@@ -9,6 +9,8 @@ export default function Home() {
       </p>
       <h2>Connections</h2>
       <p>
+        <a href="/api/oauth/shopify/start">Connect Shopify</a>
+        {" · "}
         <a href="/api/oauth/pinterest/start">Connect Pinterest</a>
         {" · "}
         <a href="/api/oauth/meta/start">Connect Facebook &amp; Instagram</a>

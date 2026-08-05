@@ -7,7 +7,16 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   SHOPIFY_WEBHOOK_SECRET: z.string().min(1),
   SHOPIFY_SHOP_DOMAIN: z.string().min(1),
-  SHOPIFY_ADMIN_API_ACCESS_TOKEN: z.string().min(1),
+  // Since Jan 1, 2026 Shopify no longer issues a static Admin API token
+  // from the admin for apps created in the Dev Dashboard — these two
+  // are the OAuth client credentials this app exchanges for a token
+  // itself (see src/lib/platforms/shopify.ts), replacing the old
+  // SHOPIFY_ADMIN_API_ACCESS_TOKEN.
+  SHOPIFY_CLIENT_ID: z.string().min(1),
+  SHOPIFY_CLIENT_SECRET: z.string().min(1),
+  // The store's canonical {handle}.myshopify.com domain — OAuth always
+  // operates against this, not the custom domain in SHOPIFY_SHOP_DOMAIN.
+  SHOPIFY_MYSHOPIFY_DOMAIN: z.string().min(1),
   ANTHROPIC_API_KEY: z.string().min(1),
   CRON_SECRET: z.string().min(1),
   SUPABASE_URL: z.string().min(1),
