@@ -120,13 +120,20 @@ via API from this session:
   needs. The `WebhookSubscriptionTopic` GraphQL enum that config-as-code
   validates against has no `ARTICLES_*` (or `BLOGS_*`) topic at all —
   blog article events aren't declarable through the App Management API
-  as of this API version. The subscription has to be registered the
-  classic way instead: Shopify admin → Settings → Notifications →
-  Webhooks (pick "Article creation" / "Article update", point at
-  `${APP_BASE_URL}/api/webhooks/shopify/articles`), or a one-time REST
-  Admin API call (`POST /admin/api/2026-04/webhooks.json`) using the
-  Admin API access token this app gets once connected via
-  `/api/oauth/shopify/start`. `SHOPIFY_WEBHOOK_SECRET` still verifies
+  as of this API version, and the Shopify admin's Notifications →
+  Webhooks dropdown doesn't offer "Article creation"/"Article update"
+  either (confirmed — it's not just missing from the GraphQL side).
+  Register it via the classic REST Admin API instead, once Shopify is
+  connected via `/api/oauth/shopify/start`:
+  ```bash
+  DATABASE_URL=... APP_BASE_URL=https://vgf-content-platform.vercel.app \
+    npx tsx scripts/register-shopify-webhooks.ts
+  ```
+  [`scripts/register-shopify-webhooks.ts`](./scripts/register-shopify-webhooks.ts)
+  reads the Admin API token this app already stored in Vault and calls
+  `POST /admin/api/2026-04/webhooks.json` for both topics — safe to
+  re-run, since Shopify treats a duplicate topic+address pair as a
+  no-op rather than an error. `SHOPIFY_WEBHOOK_SECRET` still verifies
   the signature on the receiving end either way.
 - Pinterest and Meta developer apps (§8 of the plan covers what each
   requires and current approval friction), each with their OAuth redirect
