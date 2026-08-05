@@ -98,18 +98,19 @@ via API from this session:
   the `articles/create`/`articles/update` webhook subscription) is
   declared as code in [`shopify.app.toml`](./shopify.app.toml) rather
   than clicked through the dashboard, so it stays in the same repo and
-  under version control. Fill in the real `client_id` (run
-  `shopify app config link` to pull it down, or paste it directly — it's
-  not secret), then push it live:
+  under version control. `client_id` is filled in with the app's real
+  value already — what's still outstanding is pushing the file live:
   ```bash
   npx shopify auth login
   npx shopify app deploy
   ```
   This requires an interactive browser login to the Partner/Dev
   Dashboard account that owns the app — not something that can be done
-  from an unattended session. Re-run `shopify app deploy` any time
-  `shopify.app.toml` changes (e.g. the deployment URL changes, or a new
-  webhook topic is added).
+  from an unattended session. Until that's run, the Dev Dashboard app
+  still has whatever was last pushed (the `https://example.com`
+  placeholder). Re-run `shopify app deploy` any time `shopify.app.toml`
+  changes (e.g. the deployment URL changes, or a new webhook topic is
+  added).
 - Pinterest and Meta developer apps (§8 of the plan covers what each
   requires and current approval friction), each with their OAuth redirect
   URI registered as `${APP_BASE_URL}/api/oauth/pinterest/callback` and

@@ -5,18 +5,17 @@
 # subscription the ingestion pipeline needs — so there are no
 # extensions and `embedded = false`.
 #
-# client_id below is a placeholder: this file was authored without
-# access to the real Dev Dashboard app, so it can't be pulled down
-# automatically. Fill it in with the app's real Client ID (not secret —
-# safe to commit), or run `shopify app config link` first to pull the
-# actual current config down over this file, then re-apply the
-# application_url/redirect_urls values below if that overwrites them.
+# Not yet live: this file needs `shopify app deploy` (after
+# `shopify auth login`, interactive/browser — see README) before the
+# Dev Dashboard app actually picks up application_url/redirect_urls/the
+# webhook subscription below; right now the app still has whatever was
+# last pushed (the https://example.com placeholder).
 #
 # See docs/PHASE_0_PLAN.md and README.md "What has to exist before this
 # runs against real data" for the full setup context.
 
 name = "VGF Content Distribution"
-client_id = "REPLACE_WITH_REAL_CLIENT_ID"
+client_id = "9477fb4fb3c352728f8f5293167c3b77"
 application_url = "https://vgf-content-platform.vercel.app"
 embedded = false
 
