@@ -431,7 +431,9 @@ async function dispatch(job: Job) {
   }
 }
 
-export async function POST(request: Request) {
+// Vercel Cron always sends GET, not POST — vercel.json wires this path
+// to fire on schedule, and a POST-only handler here 405s every time.
+export async function GET(request: Request) {
   const { CRON_SECRET } = requireEnv("CRON_SECRET");
   const authHeader = request.headers.get("authorization");
   if (authHeader !== `Bearer ${CRON_SECRET}`) {

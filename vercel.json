@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/run-jobs",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/poll-shopify-articles",
+      "schedule": "0 16 * * *"
     }
   ]
 }

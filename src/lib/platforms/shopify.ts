@@ -32,11 +32,10 @@ export function buildShopifyAuthorizeUrl(shopDomain: string, clientId: string, r
   return url.toString();
 }
 
-// The OAuth callback's query string is itself signed — a different
-// mechanism from the webhook HMAC in shopify-webhook.ts (that one signs
-// the raw POST body with a base64 digest; this one signs the sorted
-// query params with a hex digest). Every field except `hmac` is
-// included, sorted alphabetically by key and joined as `key=value&...`.
+// The OAuth callback's query string is itself signed: every field
+// except `hmac` is included, sorted alphabetically by key and joined as
+// `key=value&...`, then signed as a hex digest (distinct from Shopify's
+// separate base64-digest signing scheme used to sign raw webhook bodies).
 export function verifyShopifyOAuthCallback(searchParams: URLSearchParams, clientSecret: string): boolean {
   const hmac = searchParams.get("hmac");
   if (!hmac) return false;

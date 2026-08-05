@@ -13,12 +13,12 @@ Phase 1, milestones 1–8 done — Pinterest, Facebook, and Instagram are
 all publish-capable end to end:
 
 1. Schema in place (all 11 tables from the plan plus `shopify_connection`, migrations generated and verified).
-2. Shopify ingestion + extraction pipeline: webhook receiver (`/api/webhooks/shopify/articles`), content-hash dedup, job queue (`jobs` table with `SKIP LOCKED` claiming), a Vercel Cron runner (`/api/cron/run-jobs`) implementing the §5 retry/backoff policy, and the `extract_article` job (Claude call → structured extraction → `article_extractions`). Shopify's own connection (`/api/oauth/shopify/*`) uses the OAuth authorization code grant, not a static token — Shopify stopped issuing those for Dev Dashboard apps on Jan 1, 2026.
+2. Shopify ingestion + extraction pipeline: a daily poll (`/api/cron/poll-shopify-articles`, `src/lib/platforms/shopify-articles.ts`) rather than a webhook — Shopify has no webhook topic for blog articles on any API surface, see below — with the same content-hash dedup, job queue (`jobs` table with `SKIP LOCKED` claiming), a Vercel Cron runner (`/api/cron/run-jobs`) implementing the §5 retry/backoff policy, and the `extract_article` job (Claude call → structured extraction → `article_extractions`). Shopify's own connection (`/api/oauth/shopify/*`) uses the OAuth authorization code grant, not a static token — Shopify stopped issuing those for Dev Dashboard apps on Jan 1, 2026.
 3. Per-platform content generation (`generate_content` job) for all four platforms, plus the discrete claim-grounding pass from §3 that flags any generated claim not backed by the article.
 4. Review Queue UI (`/review`) and server actions: approve / approve-all / reject, inline copy edit, free-text instruction box, and per-field "regenerate" buttons — all going through the same in-place-edit rule from §4 (editing an approved/scheduled item reverts it to `in_review` and cancels its pending publish).
 5. Image compositor: two fixed Pinterest pin templates plus a square Instagram slide template (`src/lib/templates/`) rendered server-side with Satori → resvg (`src/lib/render.ts`), a `render_image` job wired to run automatically after Pinterest/Instagram copy generation, tag-based approved-image selection (`src/lib/assets.ts`) that explicitly refuses to guess — no tag overlap means the item is flagged `needs_asset` rather than silently picking an unrelated photo or falling back to an AI-generated visual.
 6. **Publishing**: OAuth connect flows for Pinterest (`/api/oauth/pinterest/*`) and Meta (`/api/oauth/meta/*`, one flow produces both the `facebook` and `instagram` connections since they share a Page token), token storage via Supabase Vault (`src/lib/vault.ts`, per §3's decision), Pinterest/Facebook/Instagram API clients (`src/lib/platforms/`) — Instagram's is the full three-step Graph API container/publish flow for carousels — fixed-schedule spacing (`src/lib/scheduling.ts` — Pinterest capped at 2/day spread 6h apart, Facebook ~weekly, both "boring by design" per §1/§4), and the `publish_post` job implementing §5's retry + one-shot auth-renewal policy exactly: one refresh attempt, one retry with the new token, and on failure the connection is marked `expired` and every other pending publish for that platform is paused rather than left to fail one at a time. A `publish_target` still unpublished 24h past its scheduled time stops auto-retrying too, per the same section. Approving a Pinterest, Facebook, or Instagram item now auto-schedules it if that platform is connected; otherwise it stays `approved` until Brendan connects it.
-7. **Auth**: Supabase magic-link sign-in (`/login`, `/auth/callback`), allow-listed to a single `ADMIN_EMAIL`, gating every route via `middleware.ts` except the two that authenticate themselves (Shopify's webhook HMAC, Vercel Cron's `CRON_SECRET`).
+7. **Auth**: Supabase magic-link sign-in (`/login`, `/auth/callback`), allow-listed to a single `ADMIN_EMAIL`, gating every route via `middleware.ts` except the `/api/cron/*` routes, which authenticate themselves via Vercel Cron's `CRON_SECRET` bearer token instead.
 
 Not yet built: the Article detail, Asset Library (upload/tag UI), and
 Publish Log screens, and the Connections/Policy screen (right now
@@ -28,7 +28,7 @@ the table exists, the screen doesn't).
 
 Verified in four tiers, in order of how real they are:
 - No live credentials needed: `npm run typecheck`, `npx next build`, and `npm test` (55 unit tests) all pass.
-- **Against a real local Postgres** (`scripts/integration-check.ts`): confirmed the Shopify webhook dedup logic, the cron auth check, the approve → auto-schedule → edit → cancel-pending-publish chain (including that a canceled target's already-enqueued job no-ops cleanly instead of trying to publish), and both `render_image` paths end to end. This caught a real bug earlier (raw-SQL snake_case vs. camelCase in `claimDueJobs`) and this round confirmed the *new* scheduling logic picks the exact right slot (`2026-08-06T14:00:00Z` for the first Pinterest pin approved with nothing else scheduled — matches the spacing rule precisely).
+- **Against a real local Postgres** (`scripts/integration-check.ts`): confirmed the Shopify article sync dedup logic, the cron auth check, the approve → auto-schedule → edit → cancel-pending-publish chain (including that a canceled target's already-enqueued job no-ops cleanly instead of trying to publish), and both `render_image` paths end to end. This caught a real bug earlier (raw-SQL snake_case vs. camelCase in `claimDueJobs`) and this round confirmed the *new* scheduling logic picks the exact right slot (`2026-08-06T14:00:00Z` for the first Pinterest pin approved with nothing else scheduled — matches the spacing rule precisely).
 - **Rendering itself** (`scripts/render-sample.ts`, no DB): produces real PNGs from both templates, verified by magic bytes/size and by looking at the output — caught a `ReferenceError: React is not defined` outside Next's JSX runtime and a webpack build failure on `@resvg/resvg-js`'s native binary (fixed via `serverExternalPackages`).
 - **What could not be verified here, and why**: the outbound proxy in this environment explicitly blocks `api.pinterest.com`, `graph.facebook.com`, and `*.myshopify.com` by policy (confirmed via the proxy's own status endpoint and a direct `curl`, not assumed), so none of the actual Pinterest/Meta/Shopify-OAuth HTTP calls were ever made — the clients are built against each platform's stable, documented contract, and the signature/HMAC verification logic (`src/lib/platforms/errors.ts`, `src/lib/platforms/shopify.ts`) is unit-tested against realistic fixtures instead of a live response. Supabase Vault is a Supabase-platform extension unavailable in a plain local Postgres, so `src/lib/vault.ts` is typecheck-verified only. Supabase Auth (magic-link) likewise needs a real Supabase project — `middleware.ts` and the login/callback routes are typecheck- and build-verified only. All of the above need Brendan's real Pinterest/Meta/Shopify apps and Supabase project to exercise for real — flagging this plainly rather than overstating what a green test suite proves here.
 
@@ -43,7 +43,7 @@ su postgres -c "createdb vgf_test"
 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/vgf_test" npx drizzle-kit push
 
 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/vgf_test" \
-SHOPIFY_WEBHOOK_SECRET="test-secret" CRON_SECRET="test-cron-secret" \
+CRON_SECRET="test-cron-secret" \
 SHOPIFY_SHOP_DOMAIN="verygoodfireplaces.com" \
 ANTHROPIC_API_KEY="<real-or-invalid-key>" \
 npx tsx scripts/integration-check.ts
@@ -83,8 +83,7 @@ via API from this session:
   issuing a static Admin API token from the admin for new apps as of
   Jan 1, 2026). Note the app's Client ID/Secret for `SHOPIFY_CLIENT_ID` /
   `SHOPIFY_CLIENT_SECRET`. `SHOPIFY_MYSHOPIFY_DOMAIN` is the store's real
-  `*.myshopify.com` admin domain (not the custom domain), and
-  `SHOPIFY_WEBHOOK_SECRET` is set separately, same as before. This app
+  `*.myshopify.com` admin domain (not the custom domain). This app
   runs the standard OAuth authorization code grant itself to get its
   token (`/api/oauth/shopify/start` on the home page) — the simpler
   client_credentials grant doesn't work here, since it's restricted to
@@ -115,26 +114,22 @@ via API from this session:
   piece — re-run `shopify app deploy` after any `shopify.app.toml`
   change until it succeeds cleanly.
 
-  **Not covered by `shopify.app.toml`**: the `articles/create` /
-  `articles/update` webhook subscription this app's ingestion pipeline
-  needs. The `WebhookSubscriptionTopic` GraphQL enum that config-as-code
-  validates against has no `ARTICLES_*` (or `BLOGS_*`) topic at all —
-  blog article events aren't declarable through the App Management API
-  as of this API version, and the Shopify admin's Notifications →
-  Webhooks dropdown doesn't offer "Article creation"/"Article update"
-  either (confirmed — it's not just missing from the GraphQL side).
-  Register it via the classic REST Admin API instead, once Shopify is
-  connected via `/api/oauth/shopify/start`:
-  ```bash
-  DATABASE_URL=... APP_BASE_URL=https://vgf-content-platform.vercel.app \
-    npx tsx scripts/register-shopify-webhooks.ts
-  ```
-  [`scripts/register-shopify-webhooks.ts`](./scripts/register-shopify-webhooks.ts)
-  reads the Admin API token this app already stored in Vault and calls
-  `POST /admin/api/2026-04/webhooks.json` for both topics — safe to
-  re-run, since Shopify treats a duplicate topic+address pair as a
-  no-op rather than an error. `SHOPIFY_WEBHOOK_SECRET` still verifies
-  the signature on the receiving end either way.
+  **Article ingestion polls instead of using a webhook.** Shopify has no
+  webhook topic for blog articles at all, on either API surface: the
+  `WebhookSubscriptionTopic` GraphQL enum that config-as-code validates
+  against has no `ARTICLES_*`/`BLOGS_*` entry, the Shopify admin's
+  Notifications → Webhooks dropdown doesn't offer "Article
+  creation"/"Article update" either, and the classic REST
+  `POST /admin/api/2026-04/webhooks.json` endpoint rejects
+  `articles/create`/`articles/update` outright with "Invalid topic
+  specified" — confirmed directly against all three, not just the
+  GraphQL side. So `/api/cron/poll-shopify-articles`
+  (`src/lib/platforms/shopify-articles.ts`) polls the blog named by
+  `SHOPIFY_BLOG_HANDLE` once daily (`vercel.json`, 16:00 UTC) once
+  Shopify is connected via `/api/oauth/shopify/start`, diffing each
+  article's content hash the same way a webhook receiver would have.
+  Nothing to register — it just needs the cron schedule deployed and a
+  live Shopify connection.
 - Pinterest and Meta developer apps (§8 of the plan covers what each
   requires and current approval friction), each with their OAuth redirect
   URI registered as `${APP_BASE_URL}/api/oauth/pinterest/callback` and

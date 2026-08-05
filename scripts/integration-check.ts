@@ -1,27 +1,21 @@
 // One-off integration check against a real local Postgres — not part of
-// the app, not committed to run in CI. Exercises the webhook route, job
+// the app, not committed to run in CI. Exercises article sync, the job
 // queue, and review actions against real DB round-trips instead of just
 // type-checking them. Run with:
-//   DATABASE_URL=... SHOPIFY_WEBHOOK_SECRET=... CRON_SECRET=... \
+//   DATABASE_URL=... CRON_SECRET=... \
 //     npx tsx scripts/integration-check.ts
-import { createHmac } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import assert from "node:assert/strict";
 
 import { Resvg } from "@resvg/resvg-js";
 import { db } from "../src/db/client";
 import { articles, assetLibrary, contentAssets, contentItems, jobs, platformConnections, publishTargets } from "../src/db/schema";
-import { POST as webhookPost } from "../app/api/webhooks/shopify/articles/route";
-import { POST as cronPost } from "../app/api/cron/run-jobs/route";
+import { GET as cronGet } from "../app/api/cron/run-jobs/route";
+import { syncArticleFromShopify } from "../src/lib/platforms/shopify-articles";
 import { approveContentItem, updateContentItemCopy } from "../app/review/actions";
 import { enqueueJob } from "../src/lib/jobs";
 
-const WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET!;
 const CRON_SECRET = process.env.CRON_SECRET!;
-
-function sign(body: string) {
-  return createHmac("sha256", WEBHOOK_SECRET).update(body, "utf8").digest("base64");
-}
 
 // Server actions call revalidatePath(), which requires Next's request
 // context — absent when invoking the action function directly outside
@@ -39,17 +33,8 @@ async function runAction(fn: (formData: FormData) => Promise<void>, formData: Fo
   }
 }
 
-function webhookRequest(payload: unknown) {
-  const body = JSON.stringify(payload);
-  return new Request("http://localhost/api/webhooks/shopify/articles", {
-    method: "POST",
-    headers: { "x-shopify-hmac-sha256": sign(body) },
-    body,
-  });
-}
-
 async function main() {
-  console.log("--- 1. webhook: create ---");
+  console.log("--- 1. article sync: create ---");
   const articleId = 999001;
   const basePayload = {
     id: articleId,
@@ -62,27 +47,23 @@ async function main() {
     updated_at: "2026-01-01T00:00:00Z",
   };
 
-  const createRes = await webhookPost(webhookRequest(basePayload));
-  const createJson = await createRes.json();
-  console.log(createJson);
-  assert.equal(createRes.status, 200);
-  assert.equal(createJson.status, "created");
-  assert.equal(createJson.extractionQueued, true);
+  const createResult = await syncArticleFromShopify(db, basePayload);
+  console.log(createResult);
+  assert.equal(createResult.status, "created");
+  assert.equal(createResult.extractionQueued, true);
 
-  console.log("--- 2. webhook: duplicate delivery (unchanged) ---");
-  const dupRes = await webhookPost(webhookRequest(basePayload));
-  const dupJson = await dupRes.json();
-  console.log(dupJson);
-  assert.equal(dupJson.status, "unchanged");
-  assert.equal(dupJson.extractionQueued, false);
+  console.log("--- 2. article sync: re-poll with no change (unchanged) ---");
+  const dupResult = await syncArticleFromShopify(db, basePayload);
+  console.log(dupResult);
+  assert.equal(dupResult.status, "unchanged");
+  assert.equal(dupResult.extractionQueued, false);
 
-  console.log("--- 3. webhook: real content change (updated) ---");
+  console.log("--- 3. article sync: real content change (updated) ---");
   const updatedPayload = { ...basePayload, body_html: "<p>Version TWO — actually different content.</p>" };
-  const updateRes = await webhookPost(webhookRequest(updatedPayload));
-  const updateJson = await updateRes.json();
-  console.log(updateJson);
-  assert.equal(updateJson.status, "updated");
-  assert.equal(updateJson.extractionQueued, true);
+  const updateResult = await syncArticleFromShopify(db, updatedPayload);
+  console.log(updateResult);
+  assert.equal(updateResult.status, "updated");
+  assert.equal(updateResult.extractionQueued, true);
 
   console.log("--- 4. verify exactly 2 extract_article jobs enqueued (create + real update) ---");
   const [articleRow] = await db.select().from(articles).where(eq(articles.shopifyArticleId, String(articleId))).limit(1);
@@ -93,17 +74,17 @@ async function main() {
   assert.equal(extractJobs.length, 2);
 
   console.log("--- 5. cron auth rejection ---");
-  const unauthed = await cronPost(
-    new Request("http://localhost/api/cron/run-jobs", { method: "POST", headers: { authorization: "Bearer wrong" } }),
+  const unauthed = await cronGet(
+    new Request("http://localhost/api/cron/run-jobs", { method: "GET", headers: { authorization: "Bearer wrong" } }),
   );
   assert.equal(unauthed.status, 401);
   console.log("401 as expected");
 
   console.log("--- 6. cron: unimplemented job type fails_final without crashing the run ---");
   await db.insert(jobs).values({ jobType: "refresh_token", payload: { note: "no standalone handler — auth renewal is inline in runPublishPost" } });
-  const cronRes = await cronPost(
+  const cronRes = await cronGet(
     new Request("http://localhost/api/cron/run-jobs", {
-      method: "POST",
+      method: "GET",
       headers: { authorization: `Bearer ${CRON_SECRET}` },
     }),
   );
@@ -183,9 +164,9 @@ async function main() {
   // runPublishPost's canceled-target check actually works against a
   // real row, not just in isolation.
   await db.update(jobs).set({ runAt: new Date() }).where(eq(jobs.id, enqueuedPublishJob.id));
-  const cronRes7b = await cronPost(
+  const cronRes7b = await cronGet(
     new Request("http://localhost/api/cron/run-jobs", {
-      method: "POST",
+      method: "GET",
       headers: { authorization: `Bearer ${CRON_SECRET}` },
     }),
   );
@@ -196,9 +177,9 @@ async function main() {
 
   console.log("--- 8. render_image: empty asset library flags needs_asset, doesn't fail the job ---");
   await enqueueJob(db, "render_image", { contentItemId: item.id });
-  const cronRes8a = await cronPost(
+  const cronRes8a = await cronGet(
     new Request("http://localhost/api/cron/run-jobs", {
-      method: "POST",
+      method: "GET",
       headers: { authorization: `Bearer ${CRON_SECRET}` },
     }),
   );
@@ -228,9 +209,9 @@ async function main() {
   });
 
   await enqueueJob(db, "render_image", { contentItemId: item.id });
-  const cronRes9 = await cronPost(
+  const cronRes9 = await cronGet(
     new Request("http://localhost/api/cron/run-jobs", {
-      method: "POST",
+      method: "GET",
       headers: { authorization: `Bearer ${CRON_SECRET}` },
     }),
   );

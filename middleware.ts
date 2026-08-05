@@ -4,16 +4,12 @@ import { requireEnv } from "@/lib/env";
 
 const PUBLIC_PATHS = ["/login", "/auth/callback"];
 
-// Server-to-server endpoints authenticate themselves (Shopify's HMAC
-// signature, Vercel Cron's CRON_SECRET bearer token) — they're not
-// gated behind a user session, and never will be, since neither caller
-// can hold a Brendan-logged-in browser cookie.
+// Cron endpoints authenticate themselves (Vercel Cron's CRON_SECRET
+// bearer token) — they're not gated behind a user session, and never
+// will be, since Vercel's scheduler can't hold a Brendan-logged-in
+// browser cookie.
 function isPublicPath(pathname: string): boolean {
-  return (
-    PUBLIC_PATHS.includes(pathname) ||
-    pathname.startsWith("/api/webhooks/") ||
-    pathname.startsWith("/api/cron/")
-  );
+  return PUBLIC_PATHS.includes(pathname) || pathname.startsWith("/api/cron/");
 }
 
 export async function middleware(request: NextRequest) {

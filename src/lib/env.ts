@@ -5,7 +5,6 @@ import { z } from "zod";
 
 const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
-  SHOPIFY_WEBHOOK_SECRET: z.string().min(1),
   SHOPIFY_SHOP_DOMAIN: z.string().min(1),
   // Since Jan 1, 2026 Shopify no longer issues a static Admin API token
   // from the admin for apps created in the Dev Dashboard — these two
