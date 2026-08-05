@@ -1,18 +1,19 @@
 # Config-as-code for the Shopify Dev Dashboard custom app this project
 # connects to via OAuth (see src/lib/platforms/shopify.ts and
 # app/api/oauth/shopify/*). This app is headless/backend-only — it has
-# no embedded admin UI, just the read-only Admin API access + webhook
-# subscription the ingestion pipeline needs — so there are no
-# extensions and `embedded = false`.
+# no embedded admin UI, so there are no extensions and `embedded = false`.
 #
-# Webhook topics use the WebhookSubscriptionTopic GraphQL enum's
-# SCREAMING_SNAKE_CASE names (ARTICLES_CREATE, not the legacy REST-style
-# "articles/create") — `shopify app deploy` validates against the App
-# Management API, which is GraphQL-native and rejected the REST-style
-# strings outright ("The following topic is invalid: articles/create").
+# No [[webhooks.subscriptions]] block here on purpose: the
+# WebhookSubscriptionTopic GraphQL enum (which `shopify app deploy`
+# validates against — this is the App Management API, GraphQL-native)
+# has no ARTICLES_* or BLOGS_* topic at all. Blog article change events
+# have no GraphQL-declarable webhook topic as of this API version, so
+# the articles/create + articles/update subscription this app's
+# ingestion pipeline needs (app/api/webhooks/shopify/articles) has to
+# be registered a different way — see README.md "What has to exist
+# before this runs against real data" for the current path.
 #
-# See docs/PHASE_0_PLAN.md and README.md "What has to exist before this
-# runs against real data" for the full setup context.
+# See docs/PHASE_0_PLAN.md for the rest of the architecture.
 
 name = "VGF Content Distribution"
 client_id = "9477fb4fb3c352728f8f5293167c3b77"
@@ -26,10 +27,3 @@ scopes = "read_content"
 
 [auth]
 redirect_urls = ["https://vgf-content-platform.vercel.app/api/oauth/shopify/callback"]
-
-[webhooks]
-api_version = "2026-04"
-
-  [[webhooks.subscriptions]]
-  topics = ["ARTICLES_CREATE", "ARTICLES_UPDATE"]
-  uri = "/api/webhooks/shopify/articles"

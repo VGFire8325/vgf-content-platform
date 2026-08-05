@@ -94,23 +94,40 @@ via API from this session:
   step requires a few minutes in the Dev Dashboard regardless of what
   access this project already has.
 
-  App config (Admin API scope, application URL, OAuth redirect URL, and
-  the `articles/create`/`articles/update` webhook subscription) is
+  App config (Admin API scope, application URL, OAuth redirect URL) is
   declared as code in [`shopify.app.toml`](./shopify.app.toml) rather
   than clicked through the dashboard, so it stays in the same repo and
   under version control. `client_id` is filled in with the app's real
-  value already — what's still outstanding is pushing the file live:
+  value already:
   ```bash
-  npx shopify auth login
-  npx shopify app deploy
+  shopify auth login
+  shopify app deploy
   ```
   This requires an interactive browser login to the Partner/Dev
-  Dashboard account that owns the app — not something that can be done
-  from an unattended session. Until that's run, the Dev Dashboard app
-  still has whatever was last pushed (the `https://example.com`
-  placeholder). Re-run `shopify app deploy` any time `shopify.app.toml`
-  changes (e.g. the deployment URL changes, or a new webhook topic is
-  added).
+  Dashboard account that owns the app, and a real Node/Shopify CLI
+  install — this environment's outbound network is blocked from
+  reaching `accounts.shopify.com` entirely (confirmed directly, same
+  restriction as the platform hosts below), so both `auth login` and
+  `app deploy` have to run from a real machine, not this session. Since
+  Shopify validates and creates an app version atomically, a bad field
+  anywhere in the file (an earlier draft of this one had an invalid
+  webhook topic — see below) fails the whole deploy, not just that
+  piece — re-run `shopify app deploy` after any `shopify.app.toml`
+  change until it succeeds cleanly.
+
+  **Not covered by `shopify.app.toml`**: the `articles/create` /
+  `articles/update` webhook subscription this app's ingestion pipeline
+  needs. The `WebhookSubscriptionTopic` GraphQL enum that config-as-code
+  validates against has no `ARTICLES_*` (or `BLOGS_*`) topic at all —
+  blog article events aren't declarable through the App Management API
+  as of this API version. The subscription has to be registered the
+  classic way instead: Shopify admin → Settings → Notifications →
+  Webhooks (pick "Article creation" / "Article update", point at
+  `${APP_BASE_URL}/api/webhooks/shopify/articles`), or a one-time REST
+  Admin API call (`POST /admin/api/2026-04/webhooks.json`) using the
+  Admin API access token this app gets once connected via
+  `/api/oauth/shopify/start`. `SHOPIFY_WEBHOOK_SECRET` still verifies
+  the signature on the receiving end either way.
 - Pinterest and Meta developer apps (§8 of the plan covers what each
   requires and current approval friction), each with their OAuth redirect
   URI registered as `${APP_BASE_URL}/api/oauth/pinterest/callback` and
@@ -124,9 +141,6 @@ via API from this session:
   tagged so they overlap the tags on the articles they should illustrate
   — without at least one tag match, `render_image` intentionally leaves
   a pin flagged `needs_asset` instead of guessing.
-- The `articles/create`/`articles/update` webhook subscription itself
-  doesn't need a separate manual step — it's declared in
-  `shopify.app.toml` above and created by `shopify app deploy`.
 
 The read-only Shopify access already available to this session (via the
 Shopify MCP connector) was used to confirm the store's blog structure
