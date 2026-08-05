@@ -1,3 +1,5 @@
+import { signOut } from "./actions";
+
 export default function Home() {
   return (
     <main>
@@ -11,6 +13,9 @@ export default function Home() {
         {" · "}
         <a href="/api/oauth/meta/start">Connect Facebook &amp; Instagram</a>
       </p>
+      <form action={signOut}>
+        <button type="submit">Sign out</button>
+      </form>
     </main>
   );
 }
