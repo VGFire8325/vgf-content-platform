@@ -9,18 +9,44 @@ Full architecture, schema rationale, retry/cost/security decisions:
 
 ## Status
 
-Phase 1, milestones 1–2 done:
+Phase 1, milestones 1–4 done:
 
 1. Schema in place (all 11 tables from the plan, migration generated and verified).
-2. Shopify ingestion + extraction pipeline: webhook receiver (`/api/webhooks/shopify/articles`), content-hash dedup, job queue (`jobs` table with `SKIP LOCKED` claiming), a Vercel Cron runner (`/api/cron/run-jobs`) implementing the §5 retry/backoff policy, and the `extract_article` job (Claude call → structured extraction → `article_extractions`). Covered by unit tests (`npm test`) for HMAC verification, content hashing, and the extraction schema.
+2. Shopify ingestion + extraction pipeline: webhook receiver (`/api/webhooks/shopify/articles`), content-hash dedup, job queue (`jobs` table with `SKIP LOCKED` claiming), a Vercel Cron runner (`/api/cron/run-jobs`) implementing the §5 retry/backoff policy, and the `extract_article` job (Claude call → structured extraction → `article_extractions`).
+3. Per-platform content generation (`generate_content` job) for all four platforms, plus the discrete claim-grounding pass from §3 that flags any generated claim not backed by the article.
+4. Review Queue UI (`/review`) and server actions: approve / approve-all / reject, inline copy edit, free-text instruction box, and per-field "regenerate" buttons — all going through the same in-place-edit rule from §4 (editing an approved/scheduled item reverts it to `in_review` and cancels its pending publish).
 
-Not yet built: per-platform content generation, the image compositor,
-the review UI, and the platform publishers.
+Not yet built: the image compositor and the platform publishers
+(Pinterest/Meta API clients, OAuth, scheduling).
 
-Verified locally without live credentials: `npm run typecheck`,
-`npx next build`, and `npm test` all pass. Nothing has been run against
-a real database or the live Anthropic API yet — that needs the Supabase
-project and Anthropic key from "What Brendan Must Do".
+Verified two ways:
+- No live credentials needed: `npm run typecheck`, `npx next build`, and `npm test` (30 unit tests) all pass.
+- **Against a real local Postgres** (`scripts/integration-check.ts` — see below): this caught and fixed a real bug where the job-claiming query returned raw SQL column names (`job_type`) instead of the camelCase the rest of the code expected (`jobType`), which would have made every job retry/failure silently crash in production. It also confirmed the Shopify webhook dedup logic, the cron auth check, and the approve → edit → auto-revert-to-in_review → cancel-pending-publish chain all behave correctly end to end.
+
+Nothing has been run against the live Anthropic API with a real key, or
+against Supabase specifically (tested against a local Postgres instead)
+— that needs the accounts from "What Brendan Must Do".
+
+### Re-running the integration check
+
+```bash
+# once, in any environment with apt/postgres available:
+apt-get install -y postgresql && service postgresql start
+su postgres -c "psql -c \"ALTER USER postgres PASSWORD 'postgres';\""
+su postgres -c "createdb vgf_test"
+
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/vgf_test" npx drizzle-kit push
+
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/vgf_test" \
+SHOPIFY_WEBHOOK_SECRET="test-secret" CRON_SECRET="test-cron-secret" \
+SHOPIFY_SHOP_DOMAIN="verygoodfireplaces.com" SHOPIFY_ADMIN_API_ACCESS_TOKEN="unused" \
+ANTHROPIC_API_KEY="<real-or-invalid-key>" \
+npx tsx scripts/integration-check.ts
+```
+
+A real `ANTHROPIC_API_KEY` will additionally exercise `extract_article`
+end to end; an invalid one still verifies everything except the actual
+model call (it'll fail with a clean 401, not a crash).
 
 ## Stack
 

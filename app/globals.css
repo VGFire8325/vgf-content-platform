@@ -1,0 +1,104 @@
+* { box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, system-ui, sans-serif;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px;
+  color: #1a1a1a;
+  background: #fafafa;
+}
+
+h1 { margin-bottom: 24px; }
+
+.article-group { margin-bottom: 40px; }
+
+.article-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 2px solid #ddd;
+  padding-bottom: 8px;
+  margin-bottom: 16px;
+}
+.article-header h2 { margin: 0; font-size: 18px; }
+
+.items { display: flex; flex-direction: column; gap: 16px; }
+
+.item-card {
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  background: white;
+  padding: 16px;
+}
+.item-card header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.platform {
+  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  color: #555;
+}
+.status {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #eee;
+}
+.status-in_review { background: #fff3cd; }
+.status-approved { background: #d4edda; }
+.status-scheduled { background: #d1ecf1; }
+
+.flag-warning {
+  background: #fff3cd;
+  border: 1px solid #ffe08a;
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+.flag-warning ul { margin: 4px 0 0; padding-left: 20px; }
+
+.field {
+  display: block;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+.field span { display: block; font-weight: 600; margin-bottom: 4px; color: #444; }
+.field textarea, .instruction-form textarea {
+  width: 100%;
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+}
+
+.instruction-form { margin-top: 8px; }
+.instruction-form label span { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; color: #444; }
+
+.regen-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+.stub-note { font-size: 12px; color: #888; }
+
+.approve-reject { display: flex; gap: 8px; margin-top: 14px; }
+button.approve { background: #2e7d32; color: white; }
+button.reject { background: #c62828; color: white; }
+
+button {
+  cursor: pointer;
+  border: 1px solid #ccc;
+  background: #f5f5f5;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 13px;
+}

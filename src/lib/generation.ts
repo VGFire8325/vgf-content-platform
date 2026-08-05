@@ -105,62 +105,58 @@ Claims this article supports (you may only assert these, nothing else):
 ${extraction.supportedClaims.map((c) => `- ${c}`).join("\n") || "(none identified)"}`;
 }
 
-function toolForPlatform(platform: Platform): Anthropic.Tool {
-  const properties: Record<string, unknown> = {};
+// The raw JSON-schema shape of one post per platform — shared by the
+// "generate N posts" tool (wrapped in an array) and the "edit this one
+// post" tool (used bare) so the two tool defs can't drift apart.
+function postJsonSchema(platform: Platform): { properties: Record<string, unknown>; required: string[] } {
   switch (platform) {
     case "pinterest":
-      properties.posts = {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            title: { type: "string" },
-            description: { type: "string" },
-            suggestedBoard: { type: "string" },
-            imageConcept: { type: "string" },
-          },
-          required: ["title", "description", "suggestedBoard", "imageConcept"],
+      return {
+        properties: {
+          title: { type: "string" },
+          description: { type: "string" },
+          suggestedBoard: { type: "string" },
+          imageConcept: { type: "string" },
         },
+        required: ["title", "description", "suggestedBoard", "imageConcept"],
       };
-      break;
     case "linkedin":
-      properties.posts = {
-        type: "array",
-        items: {
-          type: "object",
-          properties: { postText: { type: "string" }, angle: { type: "string" } },
-          required: ["postText", "angle"],
-        },
+      return {
+        properties: { postText: { type: "string" }, angle: { type: "string" } },
+        required: ["postText", "angle"],
       };
-      break;
     case "facebook":
-      properties.posts = {
-        type: "array",
-        items: {
-          type: "object",
-          properties: { postText: { type: "string" }, imageConcept: { type: "string" } },
-          required: ["postText", "imageConcept"],
-        },
+      return {
+        properties: { postText: { type: "string" }, imageConcept: { type: "string" } },
+        required: ["postText", "imageConcept"],
       };
-      break;
     case "instagram":
-      properties.posts = {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            caption: { type: "string" },
-            slides: { type: "array", items: { type: "string" } },
-          },
-          required: ["caption", "slides"],
-        },
+      return {
+        properties: { caption: { type: "string" }, slides: { type: "array", items: { type: "string" } } },
+        required: ["caption", "slides"],
       };
-      break;
   }
+}
+
+function toolForPlatform(platform: Platform): Anthropic.Tool {
+  const item = postJsonSchema(platform);
   return {
     name: "record_posts",
     description: `Records the generated ${platform} post(s).`,
-    input_schema: { type: "object", properties, required: ["posts"] },
+    input_schema: {
+      type: "object",
+      properties: { posts: { type: "array", items: { type: "object", ...item } } },
+      required: ["posts"],
+    },
+  };
+}
+
+function editToolForPlatform(platform: Platform): Anthropic.Tool {
+  const item = postJsonSchema(platform);
+  return {
+    name: "record_edited_post",
+    description: `Records the revised ${platform} post.`,
+    input_schema: { type: "object", ...item },
   };
 }
 
@@ -179,6 +175,36 @@ export async function generatePlatformContent(
     maxTokens: 2048,
   });
   return result.posts;
+}
+
+// Revises a single already-generated post per a reviewer instruction —
+// backs both the free-text instruction box and the "regenerate just the
+// headline/caption" buttons in the review UI (the latter just supplies a
+// canned instruction). Grounding is NOT re-run here; callers are
+// expected to call groundPosts() on the result themselves, same as after
+// initial generation, so edited copy doesn't silently skip the check.
+export async function editPlatformPost(
+  client: Anthropic,
+  platform: Platform,
+  currentPost: PlatformPost,
+  instruction: string,
+): Promise<PlatformPost> {
+  const system = `${BRAND_CORE}
+
+You are revising a single already-generated ${platform} post based on a
+specific instruction from the reviewer. Apply the instruction. Leave
+everything the instruction doesn't implicate unchanged. Return the full
+revised post in the same shape as the current post — do not add fields
+that weren't there and do not drop fields that were.`;
+  const userContent = `Current post:\n${JSON.stringify(currentPost, null, 2)}\n\nInstruction: ${instruction}`;
+
+  return callStructuredTool(client, {
+    system,
+    userContent,
+    tool: editToolForPlatform(platform),
+    schema: POST_SCHEMA_BY_PLATFORM[platform] as z.ZodType<PlatformPost>,
+    maxTokens: 1024,
+  });
 }
 
 // Pulls the claim-bearing text out of a generated post so the grounding
