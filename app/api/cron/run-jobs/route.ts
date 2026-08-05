@@ -1,10 +1,14 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
-import { articleExtractions, articles, contentItems, jobs, platformEnum } from "@/db/schema";
+import { articleExtractions, articles, contentAssets, contentItems, jobs, platformEnum } from "@/db/schema";
 import { createAnthropicClient, extractArticle } from "@/lib/anthropic";
 import { requireEnv } from "@/lib/env";
 import { CONTENT_TYPE_BY_PLATFORM, generatePlatformContent, groundPosts } from "@/lib/generation";
 import { claimDueJobs, enqueueJob, markJobFailed, markJobSucceeded } from "@/lib/jobs";
+import { selectAssetForArticle } from "@/lib/assets";
+import { renderPinterestPin, resolveImageSrc } from "@/lib/render";
+import type { PinterestTemplateId } from "@/lib/templates/pinterest";
+import { uploadRenderedImage } from "@/lib/storage";
 
 export const runtime = "nodejs";
 
@@ -89,15 +93,79 @@ async function runGenerateContent(job: Job) {
   );
 
   const contentType = CONTENT_TYPE_BY_PLATFORM[platform];
-  await db.insert(contentItems).values(
-    posts.map((post, i) => ({
-      articleId: article.id,
-      platform,
-      contentType,
-      copyFields: { ...post, flaggedClaims: flaggedClaimsByPost[i] ?? [] },
-      status: "in_review" as const,
-    })),
-  );
+  const insertedItems = await db
+    .insert(contentItems)
+    .values(
+      posts.map((post, i) => ({
+        articleId: article.id,
+        platform,
+        contentType,
+        copyFields: { ...post, flaggedClaims: flaggedClaimsByPost[i] ?? [] },
+        status: "in_review" as const,
+      })),
+    )
+    .returning();
+
+  // Only Pinterest has a template/compositor implemented so far — see
+  // runRenderImage below. Other platforms' visual concepts stay
+  // text-only in copyFields until their templates exist.
+  if (platform === "pinterest") {
+    for (const row of insertedItems) {
+      await enqueueJob(db, "render_image", { contentItemId: row.id });
+    }
+  }
+}
+
+async function runRenderImage(job: Job) {
+  const { contentItemId, templateId } = job.payload as { contentItemId: string; templateId?: PinterestTemplateId };
+  const [item] = await db.select().from(contentItems).where(eq(contentItems.id, contentItemId)).limit(1);
+  if (!item) {
+    throw new NonRetryableJobError(`content_item ${contentItemId} not found`);
+  }
+  if (item.platform !== "pinterest" || item.contentType !== "pinterest_pin") {
+    throw new NonRetryableJobError(`render_image has no template for ${item.platform}/${item.contentType} yet`);
+  }
+
+  const [article] = await db.select().from(articles).where(eq(articles.id, item.articleId)).limit(1);
+  if (!article) {
+    throw new NonRetryableJobError(`article ${item.articleId} not found`);
+  }
+
+  const chosenTemplateId: PinterestTemplateId = templateId ?? "photo-full-bleed";
+  const asset = await selectAssetForArticle(db, article.tags);
+
+  if (!asset) {
+    // No approved photo tags to this article — surfaced in the review
+    // UI as "needs an approved photo," not silently skipped or replaced
+    // with an AI-generated visual (docs/PHASE_0_PLAN.md brand rule).
+    await db.insert(contentAssets).values({
+      contentItemId: item.id,
+      sourceType: "asset_library",
+      templateId: chosenTemplateId,
+      status: "needs_asset",
+    });
+    return;
+  }
+
+  const copy = item.copyFields as { title: string; description: string };
+  const imageSrc = await resolveImageSrc(asset.fileUrl);
+  const png = await renderPinterestPin(chosenTemplateId, {
+    title: copy.title,
+    description: copy.description,
+    imageSrc,
+  });
+
+  const fileUrl = await uploadRenderedImage(png, `pinterest/${item.id}-${Date.now()}.png`);
+
+  await db.insert(contentAssets).values({
+    contentItemId: item.id,
+    sourceType: "asset_library",
+    sourceAssetId: asset.id,
+    templateId: chosenTemplateId,
+    renderParams: { title: copy.title, description: copy.description },
+    fileUrl,
+    status: "rendered",
+  });
 }
 
 async function dispatch(job: Job) {
@@ -107,6 +175,7 @@ async function dispatch(job: Job) {
     case "generate_content":
       return runGenerateContent(job);
     case "render_image":
+      return runRenderImage(job);
     case "publish_post":
     case "refresh_token":
       // Not yet built — see docs/PHASE_0_PLAN.md Phase 1 milestones.

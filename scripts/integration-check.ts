@@ -5,14 +5,16 @@
 //   DATABASE_URL=... SHOPIFY_WEBHOOK_SECRET=... CRON_SECRET=... \
 //     npx tsx scripts/integration-check.ts
 import { createHmac } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import assert from "node:assert/strict";
 
+import { Resvg } from "@resvg/resvg-js";
 import { db } from "../src/db/client";
-import { articles, contentItems, jobs, platformConnections, publishTargets } from "../src/db/schema";
+import { articles, assetLibrary, contentAssets, contentItems, jobs, platformConnections, publishTargets } from "../src/db/schema";
 import { POST as webhookPost } from "../app/api/webhooks/shopify/articles/route";
 import { POST as cronPost } from "../app/api/cron/run-jobs/route";
 import { approveContentItem, updateContentItemCopy } from "../app/review/actions";
+import { enqueueJob } from "../src/lib/jobs";
 
 const WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET!;
 const CRON_SECRET = process.env.CRON_SECRET!;
@@ -98,7 +100,7 @@ async function main() {
   console.log("401 as expected");
 
   console.log("--- 6. cron: unimplemented job type fails_final without crashing the run ---");
-  await db.insert(jobs).values({ jobType: "render_image", payload: { note: "no handler yet" } });
+  await db.insert(jobs).values({ jobType: "publish_post", payload: { note: "no handler yet" } });
   const cronRes = await cronPost(
     new Request("http://localhost/api/cron/run-jobs", {
       method: "POST",
@@ -108,8 +110,8 @@ async function main() {
   const cronJson = await cronRes.json();
   console.log(cronJson);
   assert.ok(cronJson.claimed >= 1);
-  const renderResult = cronJson.results.find((r: { jobType: string }) => r.jobType === "render_image");
-  assert.equal(renderResult.outcome, "failed_final");
+  const publishResult = cronJson.results.find((r: { jobType: string }) => r.jobType === "publish_post");
+  assert.equal(publishResult.outcome, "failed_final");
 
   console.log("--- 7. review actions against a real content_item + publish_target ---");
   const [connection] = await db
@@ -165,6 +167,58 @@ async function main() {
   const [publishTargetAfter] = await db.select().from(publishTargets).where(eq(publishTargets.id, publishTarget.id)).limit(1);
   console.log("publish target status after edit:", publishTargetAfter.status);
   assert.equal(publishTargetAfter.status, "canceled", "editing an approved item must cancel its pending publish");
+
+  console.log("--- 8. render_image: empty asset library flags needs_asset, doesn't fail the job ---");
+  await enqueueJob(db, "render_image", { contentItemId: item.id });
+  const cronRes8a = await cronPost(
+    new Request("http://localhost/api/cron/run-jobs", {
+      method: "POST",
+      headers: { authorization: `Bearer ${CRON_SECRET}` },
+    }),
+  );
+  const cronJson8a = await cronRes8a.json();
+  const renderJob8a = cronJson8a.results.find((r: { jobType: string }) => r.jobType === "render_image");
+  console.log(renderJob8a);
+  assert.equal(renderJob8a.outcome, "succeeded", "an empty asset library should not fail the job");
+  const [assetRow8a] = await db
+    .select()
+    .from(contentAssets)
+    .where(eq(contentAssets.contentItemId, item.id))
+    .orderBy(sql`created_at desc`)
+    .limit(1);
+  assert.equal(assetRow8a.status, "needs_asset");
+  assert.equal(assetRow8a.fileUrl, null);
+  console.log("content_assets row:", assetRow8a.status, "fileUrl:", assetRow8a.fileUrl);
+
+  console.log("--- 9. render_image: matching asset renders a real PNG through Satori/resvg ---");
+  const testPhotoSvg = `<svg width="1000" height="1500" xmlns="http://www.w3.org/2000/svg"><rect width="1000" height="1500" fill="#7a4a2a"/></svg>`;
+  const testPhotoPng = new Resvg(testPhotoSvg).render().asPng();
+  const testPhotoDataUri = `data:image/png;base64,${testPhotoPng.toString("base64")}`;
+
+  await db.insert(assetLibrary).values({
+    fileUrl: testPhotoDataUri,
+    tags: ["test"], // overlaps the article's "test" tag from step 1
+    source: "manual_upload",
+  });
+
+  await enqueueJob(db, "render_image", { contentItemId: item.id });
+  const cronRes9 = await cronPost(
+    new Request("http://localhost/api/cron/run-jobs", {
+      method: "POST",
+      headers: { authorization: `Bearer ${CRON_SECRET}` },
+    }),
+  );
+  const cronJson9 = await cronRes9.json();
+  const renderJob9 = cronJson9.results.find((r: { jobType: string }) => r.jobType === "render_image");
+  console.log(renderJob9);
+  // With no real SUPABASE_URL/SERVICE_ROLE_KEY in this environment, the
+  // job reaches the storage upload and fails there — which is exactly
+  // the right boundary: it confirms asset selection, image resolution,
+  // and the actual Satori->resvg render all ran for real before hitting
+  // the one step that genuinely needs Brendan's Supabase project.
+  assert.equal(renderJob9.outcome, "failed_retryable");
+  assert.match(renderJob9.error, /SUPABASE_URL|SUPABASE_SERVICE_ROLE_KEY/);
+  console.log("reached storage upload as expected, failed only on missing Supabase credentials");
 
   console.log("\nALL INTEGRATION CHECKS PASSED");
 }

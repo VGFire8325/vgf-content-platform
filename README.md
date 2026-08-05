@@ -9,23 +9,26 @@ Full architecture, schema rationale, retry/cost/security decisions:
 
 ## Status
 
-Phase 1, milestones 1–4 done:
+Phase 1, milestones 1–5 done:
 
 1. Schema in place (all 11 tables from the plan, migration generated and verified).
 2. Shopify ingestion + extraction pipeline: webhook receiver (`/api/webhooks/shopify/articles`), content-hash dedup, job queue (`jobs` table with `SKIP LOCKED` claiming), a Vercel Cron runner (`/api/cron/run-jobs`) implementing the §5 retry/backoff policy, and the `extract_article` job (Claude call → structured extraction → `article_extractions`).
 3. Per-platform content generation (`generate_content` job) for all four platforms, plus the discrete claim-grounding pass from §3 that flags any generated claim not backed by the article.
 4. Review Queue UI (`/review`) and server actions: approve / approve-all / reject, inline copy edit, free-text instruction box, and per-field "regenerate" buttons — all going through the same in-place-edit rule from §4 (editing an approved/scheduled item reverts it to `in_review` and cancels its pending publish).
+5. Image compositor: two fixed Pinterest pin templates (`src/lib/templates/pinterest.tsx`) rendered server-side with Satori → resvg (`src/lib/render.ts`), a `render_image` job wired to run automatically after Pinterest copy generation, tag-based approved-image selection (`src/lib/assets.ts`) that explicitly refuses to guess — no tag overlap means the item is flagged `needs_asset` in the Review Queue rather than silently picking an unrelated photo or falling back to an AI-generated visual. A "regenerate image" button in the review UI cycles between the two templates.
 
-Not yet built: the image compositor and the platform publishers
-(Pinterest/Meta API clients, OAuth, scheduling).
+Not yet built: the platform publishers (Pinterest/Meta API clients,
+OAuth, scheduling/publishing).
 
 Verified two ways:
-- No live credentials needed: `npm run typecheck`, `npx next build`, and `npm test` (30 unit tests) all pass.
-- **Against a real local Postgres** (`scripts/integration-check.ts` — see below): this caught and fixed a real bug where the job-claiming query returned raw SQL column names (`job_type`) instead of the camelCase the rest of the code expected (`jobType`), which would have made every job retry/failure silently crash in production. It also confirmed the Shopify webhook dedup logic, the cron auth check, and the approve → edit → auto-revert-to-in_review → cancel-pending-publish chain all behave correctly end to end.
+- No live credentials needed: `npm run typecheck`, `npx next build`, and `npm test` (27 unit tests) all pass.
+- **Against a real local Postgres** (`scripts/integration-check.ts` — see below): this caught and fixed a real bug where the job-claiming query returned raw SQL column names (`job_type`) instead of the camelCase the rest of the code expected (`jobType`), which would have made every job retry/failure silently crash in production. It also confirmed the Shopify webhook dedup logic, the cron auth check, the approve → edit → auto-revert-to-in_review → cancel-pending-publish chain, and both `render_image` paths (empty library → `needs_asset`, matching asset → a real Satori/resvg render that only stops at the Supabase Storage upload, which needs credentials this environment doesn't have).
+- **Rendering itself** (`scripts/render-sample.ts`, no DB needed): produces real PNGs from both templates against a synthetic test photo, verified by magic bytes/size and by actually looking at the output — caught a real bug (`ReferenceError: React is not defined` when run outside Next's own JSX runtime) and a webpack build failure (`@resvg/resvg-js`'s native `.node` binary can't be bundled — fixed via `serverExternalPackages` in `next.config.mjs`).
 
 Nothing has been run against the live Anthropic API with a real key, or
-against Supabase specifically (tested against a local Postgres instead)
-— that needs the accounts from "What Brendan Must Do".
+against real Supabase Storage (tested against a local Postgres and a
+synthetic in-memory test photo instead) — those need the accounts from
+"What Brendan Must Do".
 
 ### Re-running the integration check
 
@@ -47,6 +50,10 @@ npx tsx scripts/integration-check.ts
 A real `ANTHROPIC_API_KEY` will additionally exercise `extract_article`
 end to end; an invalid one still verifies everything except the actual
 model call (it'll fail with a clean 401, not a crash).
+
+To check the image templates without any of the above:
+`npx tsx scripts/render-sample.ts` — no DB, no credentials, writes two
+sample PNGs (one per template) so you can look at them directly.
 
 ## Stack
 
@@ -78,6 +85,12 @@ via API from this session:
 - Pinterest and Meta developer apps (§8 of the plan covers what each
   requires and current approval friction).
 - An Anthropic API key.
+- A public Supabase Storage bucket named `content-assets` (created once
+  in the Supabase dashboard) for rendered pin images.
+- Approved product/lifestyle photos uploaded into `asset_library`,
+  tagged so they overlap the tags on the articles they should illustrate
+  — without at least one tag match, `render_image` intentionally leaves
+  a pin flagged `needs_asset` instead of guessing.
 - Once deployed, a webhook subscription pointing at
   `https://<your-deployment>/api/webhooks/shopify/articles` for the
   `articles/create` and `articles/update` topics (Shopify admin →

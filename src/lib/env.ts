@@ -10,6 +10,8 @@ const envSchema = z.object({
   SHOPIFY_ADMIN_API_ACCESS_TOKEN: z.string().min(1),
   ANTHROPIC_API_KEY: z.string().min(1),
   CRON_SECRET: z.string().min(1),
+  SUPABASE_URL: z.string().min(1),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
 });
 
 type Env = z.infer<typeof envSchema>;

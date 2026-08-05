@@ -3,11 +3,13 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db/client";
-import { articleExtractions, contentItems, editInstructions, editFieldTargetEnum, publishTargets } from "@/db/schema";
+import { articleExtractions, contentAssets, contentItems, editInstructions, editFieldTargetEnum, publishTargets } from "@/db/schema";
 import { createAnthropicClient } from "@/lib/anthropic";
 import { editPlatformPost, groundPosts, type PlatformPost } from "@/lib/generation";
 import { requireEnv } from "@/lib/env";
+import { enqueueJob } from "@/lib/jobs";
 import { CANCELABLE_PUBLISH_STATUSES, nextStatusAfterEdit, shouldCancelPendingPublish } from "@/lib/review";
+import { PINTEREST_TEMPLATE_IDS, type PinterestTemplateId } from "@/lib/templates/pinterest";
 
 const REVIEW_PATH = "/review";
 type FieldTarget = (typeof editFieldTargetEnum.enumValues)[number];
@@ -159,5 +161,34 @@ export async function regenerateField(formData: FormData) {
   const id = requireString(formData, "id");
   const field = requireString(formData, "field");
   await applyEditToItem(id, `Regenerate the ${field} for this post. Keep everything else the same.`, "copy");
+  revalidatePath(REVIEW_PATH);
+}
+
+// "Regenerate with a different template variant" — the one image
+// action the plan actually calls for in V1 (§1: no full template
+// editor). Cycles to the next fixed Pinterest layout and re-enqueues a
+// render_image job; the cron runner picks it up like any other job.
+export async function regenerateImage(formData: FormData) {
+  const id = requireString(formData, "id");
+  const [item] = await db.select().from(contentItems).where(eq(contentItems.id, id)).limit(1);
+  if (!item) {
+    throw new Error(`content_item ${id} not found`);
+  }
+  if (item.platform !== "pinterest" || item.contentType !== "pinterest_pin") {
+    throw new Error("Image regeneration is only available for Pinterest pins right now.");
+  }
+
+  const [latestAsset] = await db
+    .select()
+    .from(contentAssets)
+    .where(eq(contentAssets.contentItemId, id))
+    .orderBy(desc(contentAssets.createdAt))
+    .limit(1);
+  const currentIndex = latestAsset?.templateId
+    ? PINTEREST_TEMPLATE_IDS.indexOf(latestAsset.templateId as PinterestTemplateId)
+    : -1;
+  const nextTemplateId = PINTEREST_TEMPLATE_IDS[(currentIndex + 1) % PINTEREST_TEMPLATE_IDS.length];
+
+  await enqueueJob(db, "render_image", { contentItemId: id, templateId: nextTemplateId });
   revalidatePath(REVIEW_PATH);
 }
