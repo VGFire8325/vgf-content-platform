@@ -3,15 +3,18 @@
 # app/api/oauth/shopify/*). This app is headless/backend-only — it has
 # no embedded admin UI, so there are no extensions and `embedded = false`.
 #
-# No [[webhooks.subscriptions]] block here on purpose: the
-# WebhookSubscriptionTopic GraphQL enum (which `shopify app deploy`
-# validates against — this is the App Management API, GraphQL-native)
-# has no ARTICLES_* or BLOGS_* topic at all. Blog article change events
-# have no GraphQL-declarable webhook topic as of this API version, so
-# the articles/create + articles/update subscription this app's
-# ingestion pipeline needs (app/api/webhooks/shopify/articles) has to
-# be registered a different way — see README.md "What has to exist
-# before this runs against real data" for the current path.
+# [webhooks] below has no [[webhooks.subscriptions]] inside it, on
+# purpose: the WebhookSubscriptionTopic GraphQL enum (which
+# `shopify app deploy` validates against — this is the App Management
+# API, GraphQL-native) has no ARTICLES_* or BLOGS_* topic at all. Blog
+# article change events have no GraphQL-declarable webhook topic as of
+# this API version, so the articles/create + articles/update
+# subscription this app's ingestion pipeline needs
+# (app/api/webhooks/shopify/articles) has to be registered a different
+# way — see README.md "What has to exist before this runs against real
+# data" for the current path. `[webhooks]` itself (just `api_version`)
+# is still required by the schema even with no subscriptions in it —
+# omitting the table entirely fails deploy with "[webhooks]: Required."
 #
 # See docs/PHASE_0_PLAN.md for the rest of the architecture.
 
@@ -27,3 +30,6 @@ scopes = "read_content"
 
 [auth]
 redirect_urls = ["https://vgf-content-platform.vercel.app/api/oauth/shopify/callback"]
+
+[webhooks]
+api_version = "2026-04"
