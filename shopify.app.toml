@@ -5,11 +5,11 @@
 # subscription the ingestion pipeline needs — so there are no
 # extensions and `embedded = false`.
 #
-# Not yet live: this file needs `shopify app deploy` (after
-# `shopify auth login`, interactive/browser — see README) before the
-# Dev Dashboard app actually picks up application_url/redirect_urls/the
-# webhook subscription below; right now the app still has whatever was
-# last pushed (the https://example.com placeholder).
+# Webhook topics use the WebhookSubscriptionTopic GraphQL enum's
+# SCREAMING_SNAKE_CASE names (ARTICLES_CREATE, not the legacy REST-style
+# "articles/create") — `shopify app deploy` validates against the App
+# Management API, which is GraphQL-native and rejected the REST-style
+# strings outright ("The following topic is invalid: articles/create").
 #
 # See docs/PHASE_0_PLAN.md and README.md "What has to exist before this
 # runs against real data" for the full setup context.
@@ -31,5 +31,5 @@ redirect_urls = ["https://vgf-content-platform.vercel.app/api/oauth/shopify/call
 api_version = "2026-04"
 
   [[webhooks.subscriptions]]
-  topics = ["articles/create", "articles/update"]
+  topics = ["ARTICLES_CREATE", "ARTICLES_UPDATE"]
   uri = "/api/webhooks/shopify/articles"
