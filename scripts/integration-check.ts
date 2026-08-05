@@ -100,7 +100,7 @@ async function main() {
   console.log("401 as expected");
 
   console.log("--- 6. cron: unimplemented job type fails_final without crashing the run ---");
-  await db.insert(jobs).values({ jobType: "publish_post", payload: { note: "no handler yet" } });
+  await db.insert(jobs).values({ jobType: "refresh_token", payload: { note: "no standalone handler — auth renewal is inline in runPublishPost" } });
   const cronRes = await cronPost(
     new Request("http://localhost/api/cron/run-jobs", {
       method: "POST",
@@ -110,10 +110,10 @@ async function main() {
   const cronJson = await cronRes.json();
   console.log(cronJson);
   assert.ok(cronJson.claimed >= 1);
-  const publishResult = cronJson.results.find((r: { jobType: string }) => r.jobType === "publish_post");
-  assert.equal(publishResult.outcome, "failed_final");
+  const refreshResult = cronJson.results.find((r: { jobType: string }) => r.jobType === "refresh_token");
+  assert.equal(refreshResult.outcome, "failed_final");
 
-  console.log("--- 7. review actions against a real content_item + publish_target ---");
+  console.log("--- 7. approve auto-schedules a real content_item via a real platform_connection ---");
   const [connection] = await db
     .insert(platformConnections)
     .values({
@@ -139,19 +139,27 @@ async function main() {
   approveForm.set("id", item.id);
   await runAction(approveContentItem, approveForm);
   const [afterApprove] = await db.select().from(contentItems).where(eq(contentItems.id, item.id)).limit(1);
-  assert.equal(afterApprove.status, "approved");
-  console.log("approved ->", afterApprove.status);
+  console.log("status after approve:", afterApprove.status);
+  assert.equal(afterApprove.status, "scheduled", "approving an item with a connected platform must auto-schedule it");
 
-  const [publishTarget] = await db
-    .insert(publishTargets)
-    .values({
-      contentItemId: item.id,
-      platformConnectionId: connection.id,
-      scheduledAt: new Date(Date.now() + 86_400_000),
-      status: "scheduled",
-    })
-    .returning();
-  assert.ok(publishTarget);
+  const [publishTarget] = await db.select().from(publishTargets).where(eq(publishTargets.contentItemId, item.id)).limit(1);
+  assert.ok(publishTarget, "approve must create a publish_targets row");
+  console.log("scheduled_at:", publishTarget.scheduledAt.toISOString(), "status:", publishTarget.status);
+  assert.equal(publishTarget.status, "scheduled");
+  assert.ok(publishTarget.scheduledAt.getTime() > Date.now(), "scheduled_at must be in the future");
+
+  const [enqueuedPublishJob] = await db
+    .select()
+    .from(jobs)
+    .where(sql`job_type = 'publish_post' AND payload->>'publishTargetId' = ${publishTarget.id}`)
+    .limit(1);
+  assert.ok(enqueuedPublishJob, "approve must enqueue a publish_post job for the new publish_target");
+  assert.equal(
+    enqueuedPublishJob.runAt.getTime(),
+    publishTarget.scheduledAt.getTime(),
+    "the job must not run before the scheduled time",
+  );
+  console.log("publish_post job run_at matches scheduled_at:", enqueuedPublishJob.runAt.toISOString());
 
   const editForm = new FormData();
   editForm.set("id", item.id);
@@ -167,6 +175,24 @@ async function main() {
   const [publishTargetAfter] = await db.select().from(publishTargets).where(eq(publishTargets.id, publishTarget.id)).limit(1);
   console.log("publish target status after edit:", publishTargetAfter.status);
   assert.equal(publishTargetAfter.status, "canceled", "editing an approved item must cancel its pending publish");
+
+  console.log("--- 7b. the auto-enqueued publish_post job no-ops cleanly on a canceled target ---");
+  // The job row itself isn't touched by cancellation (only
+  // publish_targets is) — fast-forward its run_at so cron picks it up
+  // now instead of at tomorrow's scheduled slot, and confirm
+  // runPublishPost's canceled-target check actually works against a
+  // real row, not just in isolation.
+  await db.update(jobs).set({ runAt: new Date() }).where(eq(jobs.id, enqueuedPublishJob.id));
+  const cronRes7b = await cronPost(
+    new Request("http://localhost/api/cron/run-jobs", {
+      method: "POST",
+      headers: { authorization: `Bearer ${CRON_SECRET}` },
+    }),
+  );
+  const cronJson7b = await cronRes7b.json();
+  const canceledJobResult = cronJson7b.results.find((r: { id: string }) => r.id === enqueuedPublishJob.id);
+  console.log(canceledJobResult);
+  assert.equal(canceledJobResult.outcome, "succeeded", "a publish_post job for a canceled target must no-op, not fail");
 
   console.log("--- 8. render_image: empty asset library flags needs_asset, doesn't fail the job ---");
   await enqueueJob(db, "render_image", { contentItemId: item.id });

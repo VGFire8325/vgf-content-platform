@@ -3,12 +3,21 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db/client";
-import { articleExtractions, contentAssets, contentItems, editInstructions, editFieldTargetEnum, publishTargets } from "@/db/schema";
+import {
+  articleExtractions,
+  contentAssets,
+  contentItems,
+  editFieldTargetEnum,
+  editInstructions,
+  platformConnections,
+  publishTargets,
+} from "@/db/schema";
 import { createAnthropicClient } from "@/lib/anthropic";
 import { editPlatformPost, groundPosts, type PlatformPost } from "@/lib/generation";
 import { requireEnv } from "@/lib/env";
 import { enqueueJob } from "@/lib/jobs";
 import { CANCELABLE_PUBLISH_STATUSES, nextStatusAfterEdit, shouldCancelPendingPublish } from "@/lib/review";
+import { nextFacebookSlot, nextPinterestSlot } from "@/lib/scheduling";
 import { PINTEREST_TEMPLATE_IDS, type PinterestTemplateId } from "@/lib/templates/pinterest";
 
 const REVIEW_PATH = "/review";
@@ -34,9 +43,49 @@ async function cancelPendingPublishes(contentItemId: string) {
     );
 }
 
+// Only platforms with a live connection AND a publish client get
+// scheduled automatically — everything else stays 'approved' until
+// both exist (LinkedIn indefinitely, per §2; Instagram until its image
+// template exists; Pinterest/Facebook until Brendan connects them).
+async function scheduleApprovedItem(item: typeof contentItems.$inferSelect) {
+  if (item.platform !== "pinterest" && item.platform !== "facebook") {
+    return;
+  }
+  const [connection] = await db
+    .select()
+    .from(platformConnections)
+    .where(and(eq(platformConnections.platform, item.platform), eq(platformConnections.status, "connected")))
+    .limit(1);
+  if (!connection) {
+    return;
+  }
+
+  const scheduledAt = item.platform === "pinterest" ? await nextPinterestSlot(db) : await nextFacebookSlot(db);
+  const [target] = await db
+    .insert(publishTargets)
+    .values({ contentItemId: item.id, platformConnectionId: connection.id, scheduledAt, status: "scheduled" })
+    .returning();
+  if (!target) {
+    throw new Error("Insert into publish_targets returned no row");
+  }
+
+  await db.update(contentItems).set({ status: "scheduled" }).where(eq(contentItems.id, item.id));
+  // run_at = scheduledAt, so the cron runner won't claim this until the
+  // actual scheduled time — this is how "spread posts out over time"
+  // (§4) actually happens, not a separate scheduler process.
+  await enqueueJob(db, "publish_post", { publishTargetId: target.id }, scheduledAt);
+}
+
 export async function approveContentItem(formData: FormData) {
   const id = requireString(formData, "id");
-  await db.update(contentItems).set({ status: "approved", updatedAt: new Date() }).where(eq(contentItems.id, id));
+  const [updated] = await db
+    .update(contentItems)
+    .set({ status: "approved", updatedAt: new Date() })
+    .where(eq(contentItems.id, id))
+    .returning();
+  if (updated) {
+    await scheduleApprovedItem(updated);
+  }
   revalidatePath(REVIEW_PATH);
 }
 
@@ -47,16 +96,24 @@ export async function rejectContentItem(formData: FormData) {
 }
 
 // Approve all in_review items, optionally scoped to one article's batch.
+// Scheduled sequentially (not in parallel) — nextPinterestSlot's daily
+// cap counts existing publish_targets rows, so two approvals in the
+// same batch scheduling in parallel could both see "0 today" and land
+// on the same slot.
 export async function approveAllInReview(formData: FormData) {
   const articleId = formData.get("articleId");
   const conditions = [eq(contentItems.status, "in_review")];
   if (typeof articleId === "string" && articleId) {
     conditions.push(eq(contentItems.articleId, articleId));
   }
-  await db
+  const updated = await db
     .update(contentItems)
     .set({ status: "approved", updatedAt: new Date() })
-    .where(and(...conditions));
+    .where(and(...conditions))
+    .returning();
+  for (const item of updated) {
+    await scheduleApprovedItem(item);
+  }
   revalidatePath(REVIEW_PATH);
 }
 

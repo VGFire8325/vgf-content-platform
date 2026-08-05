@@ -1,14 +1,29 @@
-import { eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db/client";
-import { articleExtractions, articles, contentAssets, contentItems, jobs, platformEnum } from "@/db/schema";
+import {
+  articleExtractions,
+  articles,
+  contentAssets,
+  contentItems,
+  jobs,
+  platformConnections,
+  platformEnum,
+  publishLog,
+  publishTargets,
+} from "@/db/schema";
 import { createAnthropicClient, extractArticle } from "@/lib/anthropic";
+import { articlePublicUrl } from "@/lib/article-url";
 import { requireEnv } from "@/lib/env";
 import { CONTENT_TYPE_BY_PLATFORM, generatePlatformContent, groundPosts } from "@/lib/generation";
 import { claimDueJobs, enqueueJob, markJobFailed, markJobSucceeded } from "@/lib/jobs";
+import { PlatformAuthError, PlatformValidationError } from "@/lib/platforms/errors";
+import { createPagePost, refreshMetaUserToken } from "@/lib/platforms/meta";
+import { createPin, findOrCreateBoard, refreshPinterestToken } from "@/lib/platforms/pinterest";
 import { selectAssetForArticle } from "@/lib/assets";
 import { renderPinterestPin, resolveImageSrc } from "@/lib/render";
 import type { PinterestTemplateId } from "@/lib/templates/pinterest";
 import { uploadRenderedImage } from "@/lib/storage";
+import { readSecret, updateSecret } from "@/lib/vault";
 
 export const runtime = "nodejs";
 
@@ -168,6 +183,152 @@ async function runRenderImage(job: Job) {
   });
 }
 
+type PlatformConnectionRow = typeof platformConnections.$inferSelect;
+
+async function finalizePublished(publishTargetId: string, result: { id: string; url: string }) {
+  await db
+    .update(publishTargets)
+    .set({ status: "published", publishedAt: new Date(), externalPostId: result.id, externalPostUrl: result.url })
+    .where(eq(publishTargets.id, publishTargetId));
+  await db.insert(publishLog).values({
+    publishTargetId,
+    eventType: "published",
+    detail: { externalPostId: result.id, externalPostUrl: result.url },
+  });
+}
+
+async function handleNonAuthFailure(publishTargetId: string, err: unknown) {
+  const message = err instanceof Error ? err.message : String(err);
+  // A validation error (bad request shape, rejected content) won't
+  // improve on retry — a 5xx/network error might, so it stays
+  // failed_retrying and the job's normal backoff schedule tries again.
+  const status = err instanceof PlatformValidationError ? "failed" : "failed_retrying";
+  await db.update(publishTargets).set({ status, errorMessage: message }).where(eq(publishTargets.id, publishTargetId));
+  await db.insert(publishLog).values({ publishTargetId, eventType: "failed", detail: { message } });
+}
+
+// Exactly one refresh attempt per docs/PHASE_0_PLAN.md §5 — returns the
+// new access token on success, or null if refresh doesn't apply / fails,
+// which the caller treats as "give up, mark expired."
+async function attemptRefresh(connection: PlatformConnectionRow): Promise<string | null> {
+  if (connection.platform === "pinterest") {
+    if (!connection.refreshTokenVaultId) return null;
+    const { PINTEREST_APP_ID, PINTEREST_APP_SECRET } = requireEnv("PINTEREST_APP_ID", "PINTEREST_APP_SECRET");
+    const refreshToken = await readSecret(db, connection.refreshTokenVaultId);
+    const tokens = await refreshPinterestToken(PINTEREST_APP_ID, PINTEREST_APP_SECRET, refreshToken);
+    await updateSecret(db, connection.accessTokenVaultId, tokens.access_token);
+    await updateSecret(db, connection.refreshTokenVaultId, tokens.refresh_token);
+    await db
+      .update(platformConnections)
+      .set({ expiresAt: new Date(Date.now() + tokens.expires_in * 1000) })
+      .where(eq(platformConnections.id, connection.id));
+    return tokens.access_token;
+  }
+  if (connection.platform === "facebook" || connection.platform === "instagram") {
+    const { META_APP_ID, META_APP_SECRET } = requireEnv("META_APP_ID", "META_APP_SECRET");
+    const currentToken = await readSecret(db, connection.accessTokenVaultId);
+    const refreshed = await refreshMetaUserToken(META_APP_ID, META_APP_SECRET, currentToken);
+    await updateSecret(db, connection.accessTokenVaultId, refreshed.access_token);
+    return refreshed.access_token;
+  }
+  return null;
+}
+
+async function runPublishPost(job: Job) {
+  const { publishTargetId } = job.payload as { publishTargetId: string };
+  const [target] = await db.select().from(publishTargets).where(eq(publishTargets.id, publishTargetId)).limit(1);
+  if (!target) {
+    throw new NonRetryableJobError(`publish_target ${publishTargetId} not found`);
+  }
+  if (target.status === "canceled") {
+    return; // edited after scheduling — nothing to publish, not an error
+  }
+
+  const [item] = await db.select().from(contentItems).where(eq(contentItems.id, target.contentItemId)).limit(1);
+  if (!item) throw new NonRetryableJobError(`content_item ${target.contentItemId} not found`);
+  const [article] = await db.select().from(articles).where(eq(articles.id, item.articleId)).limit(1);
+  if (!article) throw new NonRetryableJobError(`article ${item.articleId} not found`);
+  const [connection] = await db
+    .select()
+    .from(platformConnections)
+    .where(eq(platformConnections.id, target.platformConnectionId))
+    .limit(1);
+  if (!connection) throw new NonRetryableJobError(`platform_connection ${target.platformConnectionId} not found`);
+
+  const { SHOPIFY_SHOP_DOMAIN, SHOPIFY_BLOG_HANDLE } = requireEnv("SHOPIFY_SHOP_DOMAIN", "SHOPIFY_BLOG_HANDLE");
+  const link = articlePublicUrl(SHOPIFY_SHOP_DOMAIN, SHOPIFY_BLOG_HANDLE, article.handle);
+
+  await db.update(publishTargets).set({ status: "publishing" }).where(eq(publishTargets.id, target.id));
+
+  const doPublish = async (accessToken: string) => {
+    if (item.platform === "pinterest") {
+      const [asset] = await db
+        .select()
+        .from(contentAssets)
+        .where(and(eq(contentAssets.contentItemId, item.id), eq(contentAssets.status, "rendered")))
+        .orderBy(desc(contentAssets.createdAt))
+        .limit(1);
+      if (!asset?.fileUrl) {
+        throw new NonRetryableJobError("No rendered image for this pin yet — publish ran before render_image finished");
+      }
+      const copy = item.copyFields as { title: string; description: string; suggestedBoard: string };
+      const boardId = await findOrCreateBoard(accessToken, copy.suggestedBoard);
+      return createPin(accessToken, { title: copy.title, description: copy.description, link, boardId, imageUrl: asset.fileUrl });
+    }
+    if (item.platform === "facebook") {
+      const copy = item.copyFields as { postText: string };
+      return createPagePost(accessToken, connection.externalAccountId, { message: copy.postText, link });
+    }
+    throw new NonRetryableJobError(`publish_post not implemented for ${item.platform} yet`);
+  };
+
+  const accessToken = await readSecret(db, connection.accessTokenVaultId);
+
+  let firstError: unknown;
+  try {
+    const result = await doPublish(accessToken);
+    await finalizePublished(target.id, result);
+    return;
+  } catch (err) {
+    firstError = err;
+  }
+
+  if (!(firstError instanceof PlatformAuthError)) {
+    await handleNonAuthFailure(target.id, firstError);
+    throw firstError instanceof PlatformValidationError
+      ? new NonRetryableJobError((firstError as Error).message)
+      : firstError;
+  }
+
+  // firstError was an auth error — try exactly one refresh + one retry.
+  const refreshedToken = await attemptRefresh(connection).catch(() => null);
+  if (refreshedToken) {
+    try {
+      const result = await doPublish(refreshedToken);
+      await finalizePublished(target.id, result);
+      return;
+    } catch (secondErr) {
+      await handleNonAuthFailure(target.id, secondErr);
+      throw secondErr instanceof PlatformValidationError || secondErr instanceof PlatformAuthError
+        ? new NonRetryableJobError((secondErr as Error).message)
+        : secondErr;
+    }
+  }
+
+  // Refresh failed or didn't apply — stop retrying, mark the connection
+  // expired, and pause this platform's other pending publishes instead
+  // of letting them fail one at a time against the same dead token.
+  await db.update(platformConnections).set({ status: "expired" }).where(eq(platformConnections.id, connection.id));
+  await db
+    .update(publishTargets)
+    .set({ status: "failed_retrying", errorMessage: "auth expired — reconnect required" })
+    .where(
+      and(eq(publishTargets.platformConnectionId, connection.id), inArray(publishTargets.status, ["scheduled", "publishing"])),
+    );
+  await db.insert(publishLog).values({ publishTargetId: target.id, eventType: "failed", detail: { reason: "auth_expired" } });
+  throw new NonRetryableJobError(`${connection.platform} auth expired, reconnect required`);
+}
+
 async function dispatch(job: Job) {
   switch (job.jobType) {
     case "extract_article":
@@ -177,8 +338,10 @@ async function dispatch(job: Job) {
     case "render_image":
       return runRenderImage(job);
     case "publish_post":
+      return runPublishPost(job);
     case "refresh_token":
-      // Not yet built — see docs/PHASE_0_PLAN.md Phase 1 milestones.
+      // Auth renewal happens inline inside runPublishPost per §5, not as
+      // its own scheduled job — nothing enqueues this job type yet.
       throw new NonRetryableJobError(`Job type '${job.jobType}' has no handler yet`);
     default:
       throw new NonRetryableJobError(`Unknown job type '${job.jobType}'`);

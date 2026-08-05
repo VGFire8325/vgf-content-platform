@@ -12,6 +12,12 @@ const envSchema = z.object({
   CRON_SECRET: z.string().min(1),
   SUPABASE_URL: z.string().min(1),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
+  SHOPIFY_BLOG_HANDLE: z.string().min(1),
+  APP_BASE_URL: z.string().min(1),
+  PINTEREST_APP_ID: z.string().min(1),
+  PINTEREST_APP_SECRET: z.string().min(1),
+  META_APP_ID: z.string().min(1),
+  META_APP_SECRET: z.string().min(1),
 });
 
 type Env = z.infer<typeof envSchema>;
