@@ -18,6 +18,9 @@ export function createAnthropicClient(apiKey: string) {
 // Forces a single tool call and validates its input against `schema`,
 // shared by extraction, generation, and grounding — all of which need
 // "call this exact tool, then trust nothing until it's parsed."
+// normalizeInput runs before validation, for callers that need to
+// tolerate a specific known shape of model non-compliance rather than
+// reject it outright — see normalizeExtractionInput below.
 export async function callStructuredTool<T>(
   client: Anthropic,
   options: {
@@ -26,6 +29,7 @@ export async function callStructuredTool<T>(
     tool: Anthropic.Tool;
     schema: z.ZodType<T>;
     maxTokens?: number;
+    normalizeInput?: (input: unknown) => unknown;
   },
 ): Promise<T> {
   const response = await client.messages.create({
@@ -42,7 +46,8 @@ export async function callStructuredTool<T>(
     throw new Error(`Model did not return a '${options.tool.name}' tool call`);
   }
 
-  return options.schema.parse(toolUse.input);
+  const input = options.normalizeInput ? options.normalizeInput(toolUse.input) : toolUse.input;
+  return options.schema.parse(input);
 }
 
 export const extractionSchema = z.object({
@@ -52,6 +57,36 @@ export const extractionSchema = z.object({
   keyTakeaways: z.array(z.string().min(1)).min(1),
   supportedClaims: z.array(z.string().min(1)),
 });
+
+// Despite the tool's input_schema declaring both fields as arrays, real
+// tool-use output has come back with keyTakeaways as a single
+// newline-joined string, and supportedClaims either as a string the
+// same way or omitted entirely — observed against real article content
+// in production, not a hypothetical. Coerce rather than reject: a
+// string becomes one item per non-empty line, and a missing
+// supportedClaims defaults to empty (downstream generation already
+// treats "no supported claims" as the safe, valid case — the brand
+// rule is to never assert an unsupported claim, so an empty list just
+// means nothing gets asserted, not a crash).
+function coerceToStringArray(val: unknown): unknown {
+  if (typeof val === "string") {
+    return val
+      .split(/\r?\n+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  return val;
+}
+
+export function normalizeExtractionInput(input: unknown): unknown {
+  if (typeof input !== "object" || input === null) return input;
+  const obj = input as Record<string, unknown>;
+  return {
+    ...obj,
+    keyTakeaways: coerceToStringArray(obj.keyTakeaways),
+    supportedClaims: coerceToStringArray(obj.supportedClaims ?? []),
+  };
+}
 
 export type Extraction = z.infer<typeof extractionSchema>;
 
@@ -95,6 +130,7 @@ export async function extractArticle(
     system: EXTRACTION_SYSTEM_PROMPT,
     userContent: `Article title: ${articleTitle}\n\nArticle body (HTML):\n${articleBodyHtml}`,
     tool: RECORD_EXTRACTION_TOOL,
+    normalizeInput: normalizeExtractionInput,
     schema: extractionSchema,
   });
 }
