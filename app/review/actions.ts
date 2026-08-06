@@ -78,10 +78,16 @@ async function scheduleApprovedItem(item: typeof contentItems.$inferSelect) {
 
 export async function approveContentItem(formData: FormData) {
   const id = requireString(formData, "id");
+  // Gated on the current status in the same UPDATE (not a separate
+  // check-then-act) so a double-click or a duplicate form submit can't
+  // race past this: only the first call's WHERE actually matches a row,
+  // so only it schedules — scheduleApprovedItem unconditionally inserts
+  // a new publish_targets row and job every time it runs, so calling it
+  // twice for one item means publishing it twice.
   const [updated] = await db
     .update(contentItems)
     .set({ status: "approved", updatedAt: new Date() })
-    .where(eq(contentItems.id, id))
+    .where(and(eq(contentItems.id, id), eq(contentItems.status, "in_review")))
     .returning();
   if (updated) {
     await scheduleApprovedItem(updated);

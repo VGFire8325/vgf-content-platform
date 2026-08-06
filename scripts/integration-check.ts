@@ -129,6 +129,12 @@ async function main() {
   assert.equal(publishTarget.status, "scheduled");
   assert.ok(publishTarget.scheduledAt.getTime() > Date.now(), "scheduled_at must be in the future");
 
+  console.log("--- 7a. re-approving an already-scheduled item is a no-op, not a duplicate publish ---");
+  await runAction(approveContentItem, approveForm);
+  const targetsAfterReapprove = await db.select().from(publishTargets).where(eq(publishTargets.contentItemId, item.id));
+  console.log(`publish_targets for this item after a second approve: ${targetsAfterReapprove.length}`);
+  assert.equal(targetsAfterReapprove.length, 1, "approving an already-approved/scheduled item must not create a second publish_target");
+
   const [enqueuedPublishJob] = await db
     .select()
     .from(jobs)
