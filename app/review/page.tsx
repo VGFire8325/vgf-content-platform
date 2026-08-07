@@ -162,6 +162,8 @@ export default async function ReviewPage() {
         <h1>Review Queue</h1>
         <p>
           <a href="/scheduled">View Scheduled</a>
+          {" · "}
+          <a href="/assets">Asset Library</a>
         </p>
         <p>Nothing waiting on review right now.</p>
       </main>
@@ -173,6 +175,8 @@ export default async function ReviewPage() {
       <h1>Review Queue</h1>
       <p>
         <a href="/scheduled">View Scheduled</a>
+        {" · "}
+        <a href="/assets">Asset Library</a>
       </p>
       {[...grouped.entries()].map(([articleId, group]) => (
         <section key={articleId} className="article-group">

@@ -23,12 +23,13 @@ whenever that's revisited, no code changes needed to resume it.
 6. **Publishing**: OAuth connect flows for Pinterest (`/api/oauth/pinterest/*`), Meta (`/api/oauth/meta/*`, one flow produces both the `facebook` and `instagram` connections since they share a Page token), and LinkedIn (`/api/oauth/linkedin/*`, resolves the connecting account's administered organization the same way Meta resolves its Page), token storage via Supabase Vault (`src/lib/vault.ts`, per §3's decision), Pinterest/Facebook/Instagram/LinkedIn API clients (`src/lib/platforms/`) — Instagram's is the full three-step Graph API container/publish flow for carousels, LinkedIn's targets the Community Management API's Posts endpoint (`POST /rest/posts`, organization-authored) — fixed-schedule spacing (`src/lib/scheduling.ts` — Pinterest capped at 2/day spread 6h apart, Facebook and LinkedIn both ~weekly, all "boring by design" per §1/§4), and the `publish_post` job implementing §5's retry + one-shot auth-renewal policy exactly: one refresh attempt, one retry with the new token, and on failure the connection is marked `expired` and every other pending publish for that platform is paused rather than left to fail one at a time. A `publish_target` still unpublished 24h past its scheduled time stops auto-retrying too, per the same section. Approving a Pinterest, Facebook, LinkedIn, or Instagram item now auto-schedules it if that platform is connected; otherwise it stays `approved` until Brendan connects it. LinkedIn was deferred out of V1's publish path in the original plan (§2/§8 — Community Management API access requires a registered-entity application with no approval guarantee) purely because that approval was pending, not for a technical reason; the client and OAuth flow are now built and ready the moment that approval comes through.
 7. **Approve is idempotent**: `approveContentItem`'s status update is gated on the item currently being `in_review` in the same statement, so a double-click or duplicate form submit can't schedule the same item to publish twice — found as a real duplicate Pinterest `publish_target` in production and fixed at the root (see `app/review/actions.ts`).
 8. **Auth**: Supabase magic-link sign-in (`/login`, `/auth/callback`), allow-listed to a single `ADMIN_EMAIL`, gating every route via `middleware.ts` except the `/api/cron/*` routes, which authenticate themselves via Vercel Cron's `CRON_SECRET` bearer token instead.
+9. **Asset Library** (`/assets`): the library was empty until now, which meant every Pinterest/Instagram item was landing in Review flagged `needs_asset` with nothing to render. Unblocked two ways — a one-time bulk import of all 108 active, in-stock Shopify products with a product photo (`source: 'shopify_product'`, tagged by vendor + product type + a keyword scan of installation style/finish so the existing tag-overlap matching in `src/lib/assets.ts` has something real to match against), and a permanent upload/tag screen (`app/assets/*`) for photos that aren't product shots — installation, lifestyle, etc. Uploads go to the same `content-assets` Storage bucket as rendered images, under a `library/` prefix (`uploadLibraryAsset` in `src/lib/storage.ts`); tags are editable in place per asset, and assets can be deleted. Excluded from the bulk import: archived products, the two non-fireplace vendors (protection plans, shipping insurance), and any product with no featured image.
 
-Not yet built: the Article detail, Asset Library (upload/tag UI), and
-Publish Log screens, and the Connections/Policy screen (right now
-connecting is a plain link on the home page, and there's no UI for the
-per-platform Manual/Trusted/Autonomous toggle from `brand_policies` —
-the table exists, the screen doesn't).
+Not yet built: the Article detail and Publish Log screens, and the
+Connections/Policy screen (right now connecting is a plain link on the
+home page, and there's no UI for the per-platform Manual/Trusted/
+Autonomous toggle from `brand_policies` — the table exists, the screen
+doesn't).
 
 Verified in four tiers, in order of how real they are:
 - No live credentials needed: `npm run typecheck`, `npx next build`, and `npm test` (60 unit tests) all pass.
@@ -154,10 +155,11 @@ via API from this session:
 - An Anthropic API key.
 - A public Supabase Storage bucket named `content-assets` (created once
   in the Supabase dashboard) for rendered pin images.
-- Approved product/lifestyle photos uploaded into `asset_library`,
-  tagged so they overlap the tags on the articles they should illustrate
-  — without at least one tag match, `render_image` intentionally leaves
-  a pin flagged `needs_asset` instead of guessing.
+- Product photos are seeded via the one-time bulk import (see above);
+  anything else — installation/lifestyle shots — goes in through
+  `/assets`, tagged so it overlaps the tags on the articles it should
+  illustrate. Without at least one tag match, `render_image`
+  intentionally leaves a pin flagged `needs_asset` instead of guessing.
 
 The read-only Shopify access already available to this session (via the
 Shopify MCP connector) was used to confirm the store's blog structure

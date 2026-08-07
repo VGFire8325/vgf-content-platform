@@ -26,3 +26,20 @@ export async function uploadRenderedImage(buffer: Buffer, path: string): Promise
   const { data } = client.storage.from(BUCKET).getPublicUrl(path);
   return data.publicUrl;
 }
+
+// Manual asset-library uploads (installation/lifestyle photos, etc.) —
+// same bucket as rendered images, under a separate prefix, with a
+// caller-supplied content type since these are arbitrary user files
+// rather than always-PNG renders.
+export async function uploadLibraryAsset(buffer: Buffer, path: string, contentType: string): Promise<string> {
+  const client = getClient();
+  const { error } = await client.storage.from(BUCKET).upload(path, buffer, {
+    contentType,
+    upsert: false,
+  });
+  if (error) {
+    throw new Error(`Supabase Storage upload failed: ${error.message}`);
+  }
+  const { data } = client.storage.from(BUCKET).getPublicUrl(path);
+  return data.publicUrl;
+}
