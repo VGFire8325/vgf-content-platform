@@ -366,7 +366,16 @@ async function runPublishPost(job: Job) {
         .orderBy(desc(contentAssets.createdAt))
         .limit(1);
       if (!asset?.fileUrl) {
-        throw new NonRetryableJobError("No rendered image for this pin yet — publish ran before render_image finished");
+        // Plain Error, not NonRetryableJobError: this is meant to be a
+        // transient race against render_image, which normally finishes
+        // well before the scheduled publish time — retrying (up to
+        // publish_post's normal backoff budget) gives it room to catch
+        // up instead of dying on the very first attempt. If the real
+        // cause is content_assets stuck at needs_asset (no approved
+        // photo tag match), retrying won't fix that either, but it'll
+        // keep failing for a legible, still-diagnosable reason instead
+        // of going failed_final after one shot.
+        throw new Error("No rendered image for this pin yet — publish ran before render_image finished");
       }
       const copy = item.copyFields as { title: string; description: string; suggestedBoard: string };
       const boardId = await findOrCreateBoard(accessToken, copy.suggestedBoard);
@@ -390,7 +399,9 @@ async function runPublishPost(job: Job) {
         .from(contentAssets)
         .where(and(eq(contentAssets.contentItemId, item.id), eq(contentAssets.status, "rendered")));
       if (renderedAssets.length === 0) {
-        throw new NonRetryableJobError("No rendered slides for this carousel yet — publish ran before render_image finished");
+        // Same reasoning as the Pinterest branch above — retryable, not
+        // a permanent failure on the first attempt.
+        throw new Error("No rendered slides for this carousel yet — publish ran before render_image finished");
       }
       const copy = item.copyFields as { caption: string };
       const imageUrls = renderedAssets
