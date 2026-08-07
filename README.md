@@ -9,16 +9,20 @@ Full architecture, schema rationale, retry/cost/security decisions:
 
 ## Status
 
-Phase 1, milestones 1–8 done — Pinterest, Facebook, and Instagram are
-all publish-capable end to end:
+Phase 1, milestones 1–8 done — Pinterest, Facebook, Instagram, and (as
+of this milestone) LinkedIn are all publish-capable end to end. Meta
+(Facebook + Instagram) is currently paused by choice, not broken —
+Pinterest and LinkedIn are the active focus; Meta picks back up
+whenever that's revisited, no code changes needed to resume it.
 
 1. Schema in place (all 11 tables from the plan plus `shopify_connection`, migrations generated and verified).
 2. Shopify ingestion + extraction pipeline: a daily poll (`/api/cron/poll-shopify-articles`, `src/lib/platforms/shopify-articles.ts`) rather than a webhook — Shopify has no webhook topic for blog articles on any API surface, see below — with the same content-hash dedup, job queue (`jobs` table with `SKIP LOCKED` claiming), a Vercel Cron runner (`/api/cron/run-jobs`) implementing the §5 retry/backoff policy, and the `extract_article` job (Claude call → structured extraction → `article_extractions`). Shopify's own connection (`/api/oauth/shopify/*`) uses the OAuth authorization code grant, not a static token — Shopify stopped issuing those for Dev Dashboard apps on Jan 1, 2026.
 3. Per-platform content generation (`generate_content` job) for all four platforms, plus the discrete claim-grounding pass from §3 that flags any generated claim not backed by the article.
 4. Review Queue UI (`/review`) and server actions: approve / approve-all / reject, inline copy edit, free-text instruction box, and per-field "regenerate" buttons — all going through the same in-place-edit rule from §4 (editing an approved/scheduled item reverts it to `in_review` and cancels its pending publish).
 5. Image compositor: two fixed Pinterest pin templates plus a square Instagram slide template (`src/lib/templates/`) rendered server-side with Satori → resvg (`src/lib/render.ts`), a `render_image` job wired to run automatically after Pinterest/Instagram copy generation, tag-based approved-image selection (`src/lib/assets.ts`) that explicitly refuses to guess — no tag overlap means the item is flagged `needs_asset` rather than silently picking an unrelated photo or falling back to an AI-generated visual.
-6. **Publishing**: OAuth connect flows for Pinterest (`/api/oauth/pinterest/*`) and Meta (`/api/oauth/meta/*`, one flow produces both the `facebook` and `instagram` connections since they share a Page token), token storage via Supabase Vault (`src/lib/vault.ts`, per §3's decision), Pinterest/Facebook/Instagram API clients (`src/lib/platforms/`) — Instagram's is the full three-step Graph API container/publish flow for carousels — fixed-schedule spacing (`src/lib/scheduling.ts` — Pinterest capped at 2/day spread 6h apart, Facebook ~weekly, both "boring by design" per §1/§4), and the `publish_post` job implementing §5's retry + one-shot auth-renewal policy exactly: one refresh attempt, one retry with the new token, and on failure the connection is marked `expired` and every other pending publish for that platform is paused rather than left to fail one at a time. A `publish_target` still unpublished 24h past its scheduled time stops auto-retrying too, per the same section. Approving a Pinterest, Facebook, or Instagram item now auto-schedules it if that platform is connected; otherwise it stays `approved` until Brendan connects it.
-7. **Auth**: Supabase magic-link sign-in (`/login`, `/auth/callback`), allow-listed to a single `ADMIN_EMAIL`, gating every route via `middleware.ts` except the `/api/cron/*` routes, which authenticate themselves via Vercel Cron's `CRON_SECRET` bearer token instead.
+6. **Publishing**: OAuth connect flows for Pinterest (`/api/oauth/pinterest/*`), Meta (`/api/oauth/meta/*`, one flow produces both the `facebook` and `instagram` connections since they share a Page token), and LinkedIn (`/api/oauth/linkedin/*`, resolves the connecting account's administered organization the same way Meta resolves its Page), token storage via Supabase Vault (`src/lib/vault.ts`, per §3's decision), Pinterest/Facebook/Instagram/LinkedIn API clients (`src/lib/platforms/`) — Instagram's is the full three-step Graph API container/publish flow for carousels, LinkedIn's targets the Community Management API's Posts endpoint (`POST /rest/posts`, organization-authored) — fixed-schedule spacing (`src/lib/scheduling.ts` — Pinterest capped at 2/day spread 6h apart, Facebook and LinkedIn both ~weekly, all "boring by design" per §1/§4), and the `publish_post` job implementing §5's retry + one-shot auth-renewal policy exactly: one refresh attempt, one retry with the new token, and on failure the connection is marked `expired` and every other pending publish for that platform is paused rather than left to fail one at a time. A `publish_target` still unpublished 24h past its scheduled time stops auto-retrying too, per the same section. Approving a Pinterest, Facebook, LinkedIn, or Instagram item now auto-schedules it if that platform is connected; otherwise it stays `approved` until Brendan connects it. LinkedIn was deferred out of V1's publish path in the original plan (§2/§8 — Community Management API access requires a registered-entity application with no approval guarantee) purely because that approval was pending, not for a technical reason; the client and OAuth flow are now built and ready the moment that approval comes through.
+7. **Approve is idempotent**: `approveContentItem`'s status update is gated on the item currently being `in_review` in the same statement, so a double-click or duplicate form submit can't schedule the same item to publish twice — found as a real duplicate Pinterest `publish_target` in production and fixed at the root (see `app/review/actions.ts`).
+8. **Auth**: Supabase magic-link sign-in (`/login`, `/auth/callback`), allow-listed to a single `ADMIN_EMAIL`, gating every route via `middleware.ts` except the `/api/cron/*` routes, which authenticate themselves via Vercel Cron's `CRON_SECRET` bearer token instead.
 
 Not yet built: the Article detail, Asset Library (upload/tag UI), and
 Publish Log screens, and the Connections/Policy screen (right now
@@ -27,10 +31,10 @@ per-platform Manual/Trusted/Autonomous toggle from `brand_policies` —
 the table exists, the screen doesn't).
 
 Verified in four tiers, in order of how real they are:
-- No live credentials needed: `npm run typecheck`, `npx next build`, and `npm test` (55 unit tests) all pass.
+- No live credentials needed: `npm run typecheck`, `npx next build`, and `npm test` (60 unit tests) all pass.
 - **Against a real local Postgres** (`scripts/integration-check.ts`): confirmed the Shopify article sync dedup logic, the cron auth check, the approve → auto-schedule → edit → cancel-pending-publish chain (including that a canceled target's already-enqueued job no-ops cleanly instead of trying to publish), and both `render_image` paths end to end. This caught a real bug earlier (raw-SQL snake_case vs. camelCase in `claimDueJobs`) and this round confirmed the *new* scheduling logic picks the exact right slot (`2026-08-06T14:00:00Z` for the first Pinterest pin approved with nothing else scheduled — matches the spacing rule precisely).
 - **Rendering itself** (`scripts/render-sample.ts`, no DB): produces real PNGs from both templates, verified by magic bytes/size and by looking at the output — caught a `ReferenceError: React is not defined` outside Next's JSX runtime and a webpack build failure on `@resvg/resvg-js`'s native binary (fixed via `serverExternalPackages`).
-- **What could not be verified here, and why**: the outbound proxy in this environment explicitly blocks `api.pinterest.com`, `graph.facebook.com`, and `*.myshopify.com` by policy (confirmed via the proxy's own status endpoint and a direct `curl`, not assumed), so none of the actual Pinterest/Meta/Shopify-OAuth HTTP calls were ever made — the clients are built against each platform's stable, documented contract, and the signature/HMAC verification logic (`src/lib/platforms/errors.ts`, `src/lib/platforms/shopify.ts`) is unit-tested against realistic fixtures instead of a live response. Supabase Vault is a Supabase-platform extension unavailable in a plain local Postgres, so `src/lib/vault.ts` is typecheck-verified only. Supabase Auth (magic-link) likewise needs a real Supabase project — `middleware.ts` and the login/callback routes are typecheck- and build-verified only. All of the above need Brendan's real Pinterest/Meta/Shopify apps and Supabase project to exercise for real — flagging this plainly rather than overstating what a green test suite proves here.
+- **What could not be verified here, and why**: the outbound proxy in this environment explicitly blocks `api.pinterest.com`, `graph.facebook.com`, `*.myshopify.com`, and (confirmed the same way when the LinkedIn client was built — `curl` to `www.linkedin.com`/`api.linkedin.com` both fail the CONNECT tunnel with a 403) `linkedin.com`/`api.linkedin.com`, so none of the actual Pinterest/Meta/Shopify/LinkedIn HTTP calls were ever made — the clients are built against each platform's stable, documented contract, and the error-classification logic (`src/lib/platforms/errors.ts`) is unit-tested against realistic fixtures instead of a live response. Supabase Vault is a Supabase-platform extension unavailable in a plain local Postgres, so `src/lib/vault.ts` is typecheck-verified only. Supabase Auth (magic-link) likewise needs a real Supabase project — `middleware.ts` and the login/callback routes are typecheck- and build-verified only. All of the above need Brendan's real Pinterest/Meta/Shopify apps and Supabase project to exercise for real — flagging this plainly rather than overstating what a green test suite proves here.
 
 ### Re-running the integration check
 
@@ -135,7 +139,18 @@ via API from this session:
   URI registered as `${APP_BASE_URL}/api/oauth/pinterest/callback` and
   `${APP_BASE_URL}/api/oauth/meta/callback` respectively — then connect
   from the home page (`/`) once the app is deployed and those env vars
-  are set.
+  are set. Meta is currently paused (not actively being worked on), so
+  this can wait.
+- A LinkedIn Developer app with **Community Management API** access —
+  per §8, this requires VGF to apply as a registered legal entity
+  (verified business email, organization details, a super-admin of the
+  LinkedIn Page verifying the application, then a screencast-based
+  review), with no approval guarantee. OAuth redirect URI is
+  `${APP_BASE_URL}/api/oauth/linkedin/callback` — register that exactly
+  when creating the app, then connect from the home page once
+  `LINKEDIN_CLIENT_ID`/`LINKEDIN_CLIENT_SECRET` are set. The client and
+  OAuth flow (`src/lib/platforms/linkedin.ts`, `/api/oauth/linkedin/*`)
+  are built and ready; nothing here is blocked on code, only on approval.
 - An Anthropic API key.
 - A public Supabase Storage bucket named `content-assets` (created once
   in the Supabase dashboard) for rendered pin images.

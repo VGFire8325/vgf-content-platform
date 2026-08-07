@@ -148,6 +148,39 @@ async function main() {
   );
   console.log("publish_post job run_at matches scheduled_at:", enqueuedPublishJob.runAt.toISOString());
 
+  console.log("--- 7c. LinkedIn also auto-schedules once connected, same as Pinterest/Facebook ---");
+  const [linkedinConnection] = await db
+    .insert(platformConnections)
+    .values({
+      platform: "linkedin",
+      externalAccountId: "urn:li:organization:12345",
+      displayName: "Test LinkedIn Page",
+      accessTokenVaultId: "00000000-0000-0000-0000-000000000000",
+    })
+    .returning();
+  const [linkedinItem] = await db
+    .insert(contentItems)
+    .values({
+      articleId: articleRow.id,
+      platform: "linkedin",
+      contentType: "linkedin_post",
+      copyFields: { postText: "A professional reframe of the article.", angle: "cost efficiency", flaggedClaims: [] },
+      status: "in_review",
+    })
+    .returning();
+  assert.ok(linkedinItem && linkedinConnection);
+
+  const linkedinApproveForm = new FormData();
+  linkedinApproveForm.set("id", linkedinItem.id);
+  await runAction(approveContentItem, linkedinApproveForm);
+  const [linkedinAfterApprove] = await db.select().from(contentItems).where(eq(contentItems.id, linkedinItem.id)).limit(1);
+  console.log("LinkedIn status after approve:", linkedinAfterApprove.status);
+  assert.equal(linkedinAfterApprove.status, "scheduled", "approving a LinkedIn item with a connected platform must auto-schedule it");
+
+  const [linkedinTarget] = await db.select().from(publishTargets).where(eq(publishTargets.contentItemId, linkedinItem.id)).limit(1);
+  assert.ok(linkedinTarget, "approve must create a publish_targets row for LinkedIn too");
+  assert.ok(linkedinTarget.scheduledAt.getTime() > Date.now(), "LinkedIn scheduled_at must be in the future");
+
   const editForm = new FormData();
   editForm.set("id", item.id);
   editForm.set("field:title", "Edited Title After Approval");

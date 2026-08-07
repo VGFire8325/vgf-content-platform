@@ -28,6 +28,8 @@ const envSchema = z.object({
   PINTEREST_APP_SECRET: z.string().min(1),
   META_APP_ID: z.string().min(1),
   META_APP_SECRET: z.string().min(1),
+  LINKEDIN_CLIENT_ID: z.string().min(1),
+  LINKEDIN_CLIENT_SECRET: z.string().min(1),
 });
 
 type Env = z.infer<typeof envSchema>;

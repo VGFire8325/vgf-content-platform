@@ -14,6 +14,8 @@ export default function Home() {
         <a href="/api/oauth/pinterest/start">Connect Pinterest</a>
         {" · "}
         <a href="/api/oauth/meta/start">Connect Facebook &amp; Instagram</a>
+        {" · "}
+        <a href="/api/oauth/linkedin/start">Connect LinkedIn</a>
       </p>
       <form action={signOut}>
         <button type="submit">Sign out</button>

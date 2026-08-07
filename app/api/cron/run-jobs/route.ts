@@ -17,6 +17,7 @@ import { requireEnv } from "@/lib/env";
 import { CONTENT_TYPE_BY_PLATFORM, generatePlatformContent, groundPosts } from "@/lib/generation";
 import { claimDueJobs, enqueueJob, markJobFailed, markJobSucceeded } from "@/lib/jobs";
 import { PlatformAuthError, PlatformValidationError } from "@/lib/platforms/errors";
+import { createOrganizationPost, refreshLinkedInToken } from "@/lib/platforms/linkedin";
 import { createInstagramCarousel, createPagePost, refreshMetaUserToken } from "@/lib/platforms/meta";
 import { createPin, findOrCreateBoard, refreshPinterestToken } from "@/lib/platforms/pinterest";
 import { selectAssetForArticle, selectAssetsForArticle } from "@/lib/assets";
@@ -279,6 +280,24 @@ async function attemptRefresh(connection: PlatformConnectionRow): Promise<string
     await updateSecret(db, connection.accessTokenVaultId, refreshed.access_token);
     return refreshed.access_token;
   }
+  if (connection.platform === "linkedin") {
+    // No refresh_token stored means this connection's app grant doesn't
+    // include refresh access — same "give up, mark expired" outcome as
+    // any other unrefreshable connection, not a special case here.
+    if (!connection.refreshTokenVaultId) return null;
+    const { LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET } = requireEnv("LINKEDIN_CLIENT_ID", "LINKEDIN_CLIENT_SECRET");
+    const refreshToken = await readSecret(db, connection.refreshTokenVaultId);
+    const tokens = await refreshLinkedInToken(LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET, refreshToken);
+    await updateSecret(db, connection.accessTokenVaultId, tokens.access_token);
+    if (tokens.refresh_token) {
+      await updateSecret(db, connection.refreshTokenVaultId, tokens.refresh_token);
+    }
+    await db
+      .update(platformConnections)
+      .set({ expiresAt: new Date(Date.now() + tokens.expires_in * 1000) })
+      .where(eq(platformConnections.id, connection.id));
+    return tokens.access_token;
+  }
   return null;
 }
 
@@ -343,6 +362,14 @@ async function runPublishPost(job: Job) {
     if (item.platform === "facebook") {
       const copy = item.copyFields as { postText: string };
       return createPagePost(accessToken, connection.externalAccountId, { message: copy.postText, link });
+    }
+    if (item.platform === "linkedin") {
+      const copy = item.copyFields as { postText: string };
+      return createOrganizationPost(accessToken, connection.externalAccountId, {
+        text: copy.postText,
+        link,
+        linkTitle: article.title,
+      });
     }
     if (item.platform === "instagram") {
       const renderedAssets = await db

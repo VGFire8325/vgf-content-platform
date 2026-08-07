@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PlatformAuthError, PlatformValidationError, classifyMetaError, classifyPinterestError } from "./errors";
+import { PlatformAuthError, PlatformValidationError, classifyLinkedInError, classifyMetaError, classifyPinterestError } from "./errors";
 
 test("Pinterest 401 classifies as an auth error", () => {
   const err = classifyPinterestError(401, { code: 40, message: "Invalid token" });
@@ -49,6 +49,28 @@ test("Meta a genuine validation error (HTTP 400, not OAuthException) classifies 
 
 test("Meta 500 classifies as a plain (retryable) error", () => {
   const err = classifyMetaError(500, { error: { message: "Internal error", type: "Exception" } });
+  assert.ok(!(err instanceof PlatformAuthError));
+  assert.ok(!(err instanceof PlatformValidationError));
+});
+
+test("LinkedIn 401 classifies as an auth error", () => {
+  const err = classifyLinkedInError(401, { message: "Invalid access token" });
+  assert.ok(err instanceof PlatformAuthError);
+  assert.equal(err.message, "Invalid access token");
+});
+
+test("LinkedIn 403 classifies as an auth error", () => {
+  const err = classifyLinkedInError(403, { message: "Not enough permissions" });
+  assert.ok(err instanceof PlatformAuthError);
+});
+
+test("LinkedIn 400 classifies as a validation error, not auth", () => {
+  const err = classifyLinkedInError(400, { message: "commentary is required" });
+  assert.ok(err instanceof PlatformValidationError);
+});
+
+test("LinkedIn 500 classifies as a plain (retryable) error", () => {
+  const err = classifyLinkedInError(500, { message: "Internal error" });
   assert.ok(!(err instanceof PlatformAuthError));
   assert.ok(!(err instanceof PlatformValidationError));
 });

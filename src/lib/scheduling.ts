@@ -52,11 +52,13 @@ export async function nextPinterestSlot(db: typeof DbClient): Promise<Date> {
   return pickPinterestSlot(countsByDate, tomorrow);
 }
 
-// Facebook: "roughly weekly," per the brief's light-touch scope for
-// this platform. Pure: next slot is 7 days after the last scheduled
-// post, or ~1 hour from now if there isn't one yet; never lands in the
-// past if there's been a long gap since the last post.
-export function pickFacebookSlot(lastScheduledAt: Date | null, now: Date): Date {
+// Shared "roughly weekly, boring by design" cadence — Facebook per the
+// brief's light-touch scope, LinkedIn as a reasonable default company-
+// page posting frequency (no brief guidance either way; easy to change
+// here if that's wrong). Pure: next slot is 7 days after the last
+// scheduled post, or ~1 hour from now if there isn't one yet; never
+// lands in the past if there's been a long gap since the last post.
+function pickWeeklySlot(lastScheduledAt: Date | null, now: Date): Date {
   if (!lastScheduledAt) {
     return new Date(now.getTime() + 60 * 60 * 1000);
   }
@@ -64,15 +66,31 @@ export function pickFacebookSlot(lastScheduledAt: Date | null, now: Date): Date 
   return weekLater.getTime() < now.getTime() ? new Date(now.getTime() + 60 * 60 * 1000) : weekLater;
 }
 
-export async function nextFacebookSlot(db: typeof DbClient): Promise<Date> {
+async function nextWeeklySlot(db: typeof DbClient, platform: "facebook" | "linkedin"): Promise<Date> {
   const [latest] = await db
     .select({ scheduledAt: publishTargets.scheduledAt })
     .from(publishTargets)
     .innerJoin(platformConnections, eq(publishTargets.platformConnectionId, platformConnections.id))
     .where(
-      and(eq(platformConnections.platform, "facebook"), inArray(publishTargets.status, ["scheduled", "publishing", "published"])),
+      and(eq(platformConnections.platform, platform), inArray(publishTargets.status, ["scheduled", "publishing", "published"])),
     )
     .orderBy(desc(publishTargets.scheduledAt))
     .limit(1);
-  return pickFacebookSlot(latest?.scheduledAt ?? null, new Date());
+  return pickWeeklySlot(latest?.scheduledAt ?? null, new Date());
+}
+
+export function pickFacebookSlot(lastScheduledAt: Date | null, now: Date): Date {
+  return pickWeeklySlot(lastScheduledAt, now);
+}
+
+export function nextFacebookSlot(db: typeof DbClient): Promise<Date> {
+  return nextWeeklySlot(db, "facebook");
+}
+
+export function pickLinkedInSlot(lastScheduledAt: Date | null, now: Date): Date {
+  return pickWeeklySlot(lastScheduledAt, now);
+}
+
+export function nextLinkedInSlot(db: typeof DbClient): Promise<Date> {
+  return nextWeeklySlot(db, "linkedin");
 }

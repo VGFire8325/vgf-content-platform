@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PINTEREST_SCHEDULE_START_HOUR_UTC, pickFacebookSlot, pickPinterestSlot } from "./scheduling";
+import { PINTEREST_SCHEDULE_START_HOUR_UTC, pickFacebookSlot, pickLinkedInSlot, pickPinterestSlot } from "./scheduling";
 
 test("pickPinterestSlot uses the start date when nothing is scheduled yet", () => {
   const start = new Date("2026-08-06T00:00:00Z");
@@ -47,4 +47,20 @@ test("pickFacebookSlot never lands in the past after a long gap", () => {
   const slot = pickFacebookSlot(last, now);
   assert.ok(slot.getTime() > now.getTime());
   assert.equal(slot.getTime(), now.getTime() + 60 * 60 * 1000);
+});
+
+// LinkedIn shares Facebook's weekly-cadence logic (see scheduling.ts) —
+// same behavior, a separate export so each platform's schedule is
+// tracked independently.
+test("pickLinkedInSlot schedules ~1 hour out when nothing has posted yet", () => {
+  const now = new Date("2026-08-06T12:00:00Z");
+  const slot = pickLinkedInSlot(null, now);
+  assert.equal(slot.getTime(), now.getTime() + 60 * 60 * 1000);
+});
+
+test("pickLinkedInSlot schedules 7 days after the last post", () => {
+  const last = new Date("2026-08-01T12:00:00Z");
+  const now = new Date("2026-08-02T00:00:00Z");
+  const slot = pickLinkedInSlot(last, now);
+  assert.equal(slot.toISOString(), "2026-08-08T12:00:00.000Z");
 });

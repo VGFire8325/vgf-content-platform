@@ -44,6 +44,22 @@ export function classifyMetaError(status: number, body: unknown): Error {
   return new Error(message); // 5xx/429/network — retryable per §5
 }
 
+// LinkedIn's REST API returns the auth-relevant HTTP status (401/403)
+// directly, same as Pinterest — no Meta-style buried-in-400 quirk here.
+// Not verified against a live call in this environment (outbound
+// proxy blocks linkedin.com by policy); shape follows LinkedIn's
+// documented error contract.
+export function classifyLinkedInError(status: number, body: unknown): Error {
+  const message = extractMessage(body) ?? `LinkedIn API error (HTTP ${status})`;
+  if (status === 401 || status === 403) {
+    return new PlatformAuthError(message);
+  }
+  if (status === 400 || status === 422) {
+    return new PlatformValidationError(message);
+  }
+  return new Error(message); // 5xx/429/network — retryable per §5
+}
+
 function extractMessage(body: unknown): string | undefined {
   if (body && typeof body === "object" && "message" in body && typeof (body as { message: unknown }).message === "string") {
     return (body as { message: string }).message;

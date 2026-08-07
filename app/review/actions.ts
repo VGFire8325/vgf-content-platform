@@ -17,7 +17,7 @@ import { editPlatformPost, groundPosts, type PlatformPost } from "@/lib/generati
 import { requireEnv } from "@/lib/env";
 import { enqueueJob } from "@/lib/jobs";
 import { CANCELABLE_PUBLISH_STATUSES, nextStatusAfterEdit, shouldCancelPendingPublish } from "@/lib/review";
-import { nextFacebookSlot, nextPinterestSlot } from "@/lib/scheduling";
+import { nextFacebookSlot, nextLinkedInSlot, nextPinterestSlot } from "@/lib/scheduling";
 import { PINTEREST_TEMPLATE_IDS, type PinterestTemplateId } from "@/lib/templates/pinterest";
 
 const REVIEW_PATH = "/review";
@@ -44,11 +44,14 @@ async function cancelPendingPublishes(contentItemId: string) {
 }
 
 // Only platforms with a live connection AND a publish client get
-// scheduled automatically — everything else stays 'approved' until
-// both exist (LinkedIn indefinitely, per §2; Instagram until its image
-// template exists; Pinterest/Facebook until Brendan connects them).
+// scheduled automatically — everything else stays 'approved' until both
+// exist (Instagram until its image template exists; Pinterest/
+// Facebook/LinkedIn until Brendan connects them). LinkedIn moved off
+// the "deferred out of V1" list in §2 once Community Management API
+// access was applied for and the client got built — see
+// src/lib/platforms/linkedin.ts.
 async function scheduleApprovedItem(item: typeof contentItems.$inferSelect) {
-  if (item.platform !== "pinterest" && item.platform !== "facebook") {
+  if (item.platform !== "pinterest" && item.platform !== "facebook" && item.platform !== "linkedin") {
     return;
   }
   const [connection] = await db
@@ -60,7 +63,12 @@ async function scheduleApprovedItem(item: typeof contentItems.$inferSelect) {
     return;
   }
 
-  const scheduledAt = item.platform === "pinterest" ? await nextPinterestSlot(db) : await nextFacebookSlot(db);
+  const scheduledAt =
+    item.platform === "pinterest"
+      ? await nextPinterestSlot(db)
+      : item.platform === "facebook"
+        ? await nextFacebookSlot(db)
+        : await nextLinkedInSlot(db);
   const [target] = await db
     .insert(publishTargets)
     .values({ contentItemId: item.id, platformConnectionId: connection.id, scheduledAt, status: "scheduled" })
