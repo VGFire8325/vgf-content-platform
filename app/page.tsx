@@ -6,6 +6,8 @@ export default function Home() {
       <h1>VGF Content Distribution</h1>
       <p>
         <a href="/review">Go to Review Queue</a>
+        {" · "}
+        <a href="/scheduled">View Scheduled</a>
       </p>
       <h2>Connections</h2>
       <p>

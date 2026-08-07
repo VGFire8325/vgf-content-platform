@@ -234,11 +234,16 @@ async function runRenderImage(job: Job) {
 
 type PlatformConnectionRow = typeof platformConnections.$inferSelect;
 
-async function finalizePublished(publishTargetId: string, result: { id: string; url: string }) {
+// contentItems.status mirrors the publish outcome once it's terminal
+// (published or permanently failed) so the Review/Scheduled screens —
+// which filter on contentItems.status, not publishTargets.status — stop
+// showing an item the moment it's actually done, one way or the other.
+async function finalizePublished(publishTargetId: string, contentItemId: string, result: { id: string; url: string }) {
   await db
     .update(publishTargets)
     .set({ status: "published", publishedAt: new Date(), externalPostId: result.id, externalPostUrl: result.url })
     .where(eq(publishTargets.id, publishTargetId));
+  await db.update(contentItems).set({ status: "published" }).where(eq(contentItems.id, contentItemId));
   await db.insert(publishLog).values({
     publishTargetId,
     eventType: "published",
@@ -246,13 +251,20 @@ async function finalizePublished(publishTargetId: string, result: { id: string; 
   });
 }
 
-async function handleNonAuthFailure(publishTargetId: string, err: unknown) {
+async function handleNonAuthFailure(publishTargetId: string, contentItemId: string, err: unknown) {
   const message = err instanceof Error ? err.message : String(err);
   // A validation error (bad request shape, rejected content) won't
   // improve on retry — a 5xx/network error might, so it stays
   // failed_retrying and the job's normal backoff schedule tries again.
-  const status = err instanceof PlatformValidationError ? "failed" : "failed_retrying";
+  // Only the terminal "failed" case flips contentItems.status too —
+  // failed_retrying is still an active, still-queued state as far as
+  // the Scheduled screen is concerned.
+  const isTerminal = err instanceof PlatformValidationError;
+  const status = isTerminal ? "failed" : "failed_retrying";
   await db.update(publishTargets).set({ status, errorMessage: message }).where(eq(publishTargets.id, publishTargetId));
+  if (isTerminal) {
+    await db.update(contentItems).set({ status: "failed" }).where(eq(contentItems.id, contentItemId));
+  }
   await db.insert(publishLog).values({ publishTargetId, eventType: "failed", detail: { message } });
 }
 
@@ -320,6 +332,7 @@ async function runPublishPost(job: Job) {
       .update(publishTargets)
       .set({ status: "failed", errorMessage: "Stale: still unpublished 24h after its scheduled time" })
       .where(eq(publishTargets.id, target.id));
+    await db.update(contentItems).set({ status: "failed" }).where(eq(contentItems.id, target.contentItemId));
     await db.insert(publishLog).values({
       publishTargetId: target.id,
       eventType: "failed",
@@ -397,14 +410,14 @@ async function runPublishPost(job: Job) {
   let firstError: unknown;
   try {
     const result = await doPublish(accessToken);
-    await finalizePublished(target.id, result);
+    await finalizePublished(target.id, target.contentItemId, result);
     return;
   } catch (err) {
     firstError = err;
   }
 
   if (!(firstError instanceof PlatformAuthError)) {
-    await handleNonAuthFailure(target.id, firstError);
+    await handleNonAuthFailure(target.id, target.contentItemId, firstError);
     throw firstError instanceof PlatformValidationError
       ? new NonRetryableJobError((firstError as Error).message)
       : firstError;
@@ -415,10 +428,10 @@ async function runPublishPost(job: Job) {
   if (refreshedToken) {
     try {
       const result = await doPublish(refreshedToken);
-      await finalizePublished(target.id, result);
+      await finalizePublished(target.id, target.contentItemId, result);
       return;
     } catch (secondErr) {
-      await handleNonAuthFailure(target.id, secondErr);
+      await handleNonAuthFailure(target.id, target.contentItemId, secondErr);
       throw secondErr instanceof PlatformValidationError || secondErr instanceof PlatformAuthError
         ? new NonRetryableJobError((secondErr as Error).message)
         : secondErr;

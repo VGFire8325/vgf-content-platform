@@ -31,7 +31,16 @@ export const CANCELABLE_PUBLISH_STATUSES: PublishTargetStatus[] = [
   "failed_retrying",
 ];
 
-// Review Queue default view: what's actually worth Brendan's attention.
-// Published/rejected/failed items belong in the Publish Log screen, not
-// here.
-export const REVIEW_QUEUE_STATUSES: ContentItemStatus[] = ["in_review", "approved", "scheduled"];
+// Review Queue: strictly the to-do list — items still waiting on a
+// decision. Everything else has somewhere else to live: approved/
+// scheduled items are on the Scheduled screen (app/scheduled/page.tsx),
+// published/rejected/failed items are Publish Log history. An item
+// leaves this list the moment it's approved, not when it publishes.
+export const REVIEW_QUEUE_STATUSES: ContentItemStatus[] = ["in_review"];
+
+// Scheduled screen: items past review but not yet resolved one way or
+// the other — either actively counting down to a publish_targets slot
+// ("scheduled") or approved and waiting on a platform connection before
+// one gets created ("approved", see scheduleApprovedItem in
+// app/review/actions.ts).
+export const SCHEDULED_VIEW_STATUSES: ContentItemStatus[] = ["approved", "scheduled"];

@@ -53,6 +53,7 @@ h1 { margin-bottom: 24px; }
 .status-in_review { background: #fff3cd; }
 .status-approved { background: #d4edda; }
 .status-scheduled { background: #d1ecf1; }
+.scheduled-time { margin-left: auto; font-size: 13px; color: #555; }
 
 .flag-warning {
   background: #fff3cd;
