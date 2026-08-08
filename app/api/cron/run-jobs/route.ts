@@ -282,15 +282,24 @@ async function finalizePublished(publishTargetId: string, contentItemId: string,
   });
 }
 
-async function handleNonAuthFailure(publishTargetId: string, contentItemId: string, err: unknown) {
+async function handleNonAuthFailure(publishTargetId: string, contentItemId: string, err: unknown, forceTerminal = false) {
   const message = err instanceof Error ? err.message : String(err);
   // A validation error (bad request shape, rejected content) won't
   // improve on retry — a 5xx/network error might, so it stays
   // failed_retrying and the job's normal backoff schedule tries again.
   // Only the terminal "failed" case flips contentItems.status too —
   // failed_retrying is still an active, still-queued state as far as
-  // the Scheduled screen is concerned.
-  const isTerminal = err instanceof PlatformValidationError;
+  // the Scheduled screen is concerned. forceTerminal covers the one
+  // other genuinely-dead case: an auth-classified error that recurred
+  // after a successful token refresh — a real 401/403 that isn't
+  // actually a stale-token problem (Pinterest's Trial-API-access
+  // rejection is the discovered case), so retrying again with the same
+  // fresh token would just fail the same way forever. Left as
+  // failed_retrying, this used to strand the item at contentItems.status
+  // "scheduled" forever with no live publish_target — the Scheduled page
+  // then showed the misleading "Waiting for platform connection" for an
+  // item whose connection was actually fine.
+  const isTerminal = forceTerminal || err instanceof PlatformValidationError;
   const status = isTerminal ? "failed" : "failed_retrying";
   await db.update(publishTargets).set({ status, errorMessage: message }).where(eq(publishTargets.id, publishTargetId));
   if (isTerminal) {
@@ -473,7 +482,12 @@ async function runPublishPost(job: Job) {
       await finalizePublished(target.id, target.contentItemId, result);
       return;
     } catch (secondErr) {
-      await handleNonAuthFailure(target.id, target.contentItemId, secondErr);
+      // An auth-classified error recurring against a token that was
+      // just successfully refreshed isn't actually a stale-token
+      // problem — treat it as terminal like a validation error, not
+      // "will retry" (nothing about another refresh cycle would change
+      // the outcome).
+      await handleNonAuthFailure(target.id, target.contentItemId, secondErr, secondErr instanceof PlatformAuthError);
       throw secondErr instanceof PlatformValidationError || secondErr instanceof PlatformAuthError
         ? new NonRetryableJobError((secondErr as Error).message)
         : secondErr;
