@@ -11,6 +11,7 @@ import {
   publishLog,
   publishTargets,
 } from "@/db/schema";
+import type Anthropic from "@anthropic-ai/sdk";
 import { createAnthropicClient, extractArticle } from "@/lib/anthropic";
 import { articlePublicUrl } from "@/lib/article-url";
 import { requireEnv } from "@/lib/env";
@@ -20,7 +21,7 @@ import { PlatformAuthError, PlatformValidationError } from "@/lib/platforms/erro
 import { createOrganizationPost, refreshLinkedInToken } from "@/lib/platforms/linkedin";
 import { createInstagramCarousel, createPagePost, refreshMetaUserToken } from "@/lib/platforms/meta";
 import { createPin, findOrCreateBoard, refreshPinterestToken } from "@/lib/platforms/pinterest";
-import { selectAssetForArticle, selectAssetsForArticle } from "@/lib/assets";
+import { selectAssetForArticle, selectAssetsForArticle, type ArticleMatchContext } from "@/lib/assets";
 import { renderInstagramSlide, renderPinterestPin, resolveImageSrc } from "@/lib/render";
 import type { PinterestTemplateId } from "@/lib/templates/pinterest";
 import { uploadRenderedImage } from "@/lib/storage";
@@ -135,10 +136,26 @@ async function runGenerateContent(job: Job) {
 
 type ContentItemRow = typeof contentItems.$inferSelect;
 type ArticleRow = typeof articles.$inferSelect;
+type ExtractionRow = typeof articleExtractions.$inferSelect;
 
-async function renderPinterestPinItem(item: ContentItemRow, article: ArticleRow, templateId?: PinterestTemplateId) {
+function toMatchContext(article: ArticleRow, extraction: ExtractionRow | undefined): ArticleMatchContext {
+  return {
+    title: article.title,
+    tags: article.tags,
+    coreSubject: extraction?.coreSubject,
+    keyTakeaways: extraction?.keyTakeaways as string[] | undefined,
+  };
+}
+
+async function renderPinterestPinItem(
+  item: ContentItemRow,
+  article: ArticleRow,
+  client: Anthropic,
+  extraction: ExtractionRow | undefined,
+  templateId?: PinterestTemplateId,
+) {
   const chosenTemplateId: PinterestTemplateId = templateId ?? "photo-full-bleed";
-  const asset = await selectAssetForArticle(db, article.tags);
+  const asset = await selectAssetForArticle(db, client, toMatchContext(article, extraction));
 
   if (!asset) {
     // No approved photo tags to this article — surfaced in the review
@@ -174,9 +191,14 @@ async function renderPinterestPinItem(item: ContentItemRow, article: ArticleRow,
   });
 }
 
-async function renderInstagramCarouselItem(item: ContentItemRow, article: ArticleRow) {
+async function renderInstagramCarouselItem(
+  item: ContentItemRow,
+  article: ArticleRow,
+  client: Anthropic,
+  extraction: ExtractionRow | undefined,
+) {
   const copy = item.copyFields as { caption: string; slides: string[] };
-  const assets = await selectAssetsForArticle(db, article.tags, copy.slides.length);
+  const assets = await selectAssetsForArticle(db, client, toMatchContext(article, extraction), copy.slides.length);
 
   if (assets.length === 0) {
     // Same brand rule as Pinterest: no approved photo for this article
@@ -223,11 +245,20 @@ async function runRenderImage(job: Job) {
     throw new NonRetryableJobError(`article ${item.articleId} not found`);
   }
 
+  const { ANTHROPIC_API_KEY } = requireEnv("ANTHROPIC_API_KEY");
+  const client = createAnthropicClient(ANTHROPIC_API_KEY);
+  const [extraction] = await db
+    .select()
+    .from(articleExtractions)
+    .where(eq(articleExtractions.articleId, article.id))
+    .orderBy(desc(articleExtractions.createdAt))
+    .limit(1);
+
   if (item.platform === "pinterest" && item.contentType === "pinterest_pin") {
-    return renderPinterestPinItem(item, article, templateId);
+    return renderPinterestPinItem(item, article, client, extraction, templateId);
   }
   if (item.platform === "instagram" && item.contentType === "ig_carousel") {
-    return renderInstagramCarouselItem(item, article);
+    return renderInstagramCarouselItem(item, article, client, extraction);
   }
   throw new NonRetryableJobError(`render_image has no template for ${item.platform}/${item.contentType} yet`);
 }
