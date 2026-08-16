@@ -41,7 +41,7 @@ export async function GET(request: Request) {
   const cutoff = await getShopifyArticlesCutoff(db);
   const shopifyArticles = await fetchAllArticles(connection.shopDomain, accessToken, blogId, cutoff ?? undefined);
 
-  const results = { checked: shopifyArticles.length, created: 0, updated: 0, unchanged: 0 };
+  const results = { checked: shopifyArticles.length, created: 0, published: 0, updated: 0, unchanged: 0, skipped_unpublished: 0 };
   for (const article of shopifyArticles) {
     const { status } = await syncArticleFromShopify(db, article);
     results[status]++;

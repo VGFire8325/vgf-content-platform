@@ -77,7 +77,13 @@ export async function fetchAllArticles(
 ): Promise<ShopifyArticle[]> {
   const results: ShopifyArticle[] = [];
   const minParam = updatedAtMin ? `&updated_at_min=${encodeURIComponent(updatedAtMin.toISOString())}` : "";
-  let url: string | null = `https://${shopDomain}/admin/api/${API_VERSION}/blogs/${blogId}/articles.json?limit=250${minParam}`;
+  // Explicit "any" rather than trusting Shopify's default — syncArticleFromShopify
+  // decides what's ready to process based on published_at itself, and needs
+  // to see drafts/scheduled/unpublished articles too, not just currently-live
+  // ones. Filtering here would hide the "went offline" half of an
+  // unpublish-then-republish cycle, which is exactly the transition it needs
+  // to detect on the way back.
+  let url: string | null = `https://${shopDomain}/admin/api/${API_VERSION}/blogs/${blogId}/articles.json?limit=250&published_status=any${minParam}`;
 
   while (url) {
     const response: Response = await fetch(url, { headers: { "X-Shopify-Access-Token": accessToken } });
@@ -95,14 +101,52 @@ export async function fetchAllArticles(
 }
 
 interface SyncResult {
-  status: "created" | "updated" | "unchanged";
-  articleId: string;
+  status: "created" | "skipped_unpublished" | "published" | "updated" | "unchanged";
+  articleId: string | null;
   extractionQueued: boolean;
 }
 
+// Shopify's own "live" concept: published_at set and not in the future.
+// Confirmed to match Shopify's isPublished exactly — a post scheduled for
+// a future date carries a real published_at but Shopify itself reports
+// isPublished: false until that date arrives.
+export function isArticleLive(publishedAt: string | null, now: Date = new Date()): boolean {
+  if (!publishedAt) return false;
+  return new Date(publishedAt).getTime() <= now.getTime();
+}
+
+type SyncAction = SyncResult["status"];
+
+// Pure decision table, factored out so every branch is unit-testable
+// without a database. `wasLive`/`isLive` are Shopify's live concept
+// (isArticleLive) as of our last stored copy vs. right now; `hashChanged`
+// only matters once we already know the article is live and existed
+// before — an unpublished/scheduled article is never a candidate for a
+// content-hash comparison in the first place.
+export function decideSyncAction(params: { existing: boolean; wasLive: boolean; isLive: boolean; hashChanged: boolean }): SyncAction {
+  if (!params.existing) {
+    return params.isLive ? "created" : "skipped_unpublished";
+  }
+  if (!params.isLive) {
+    // Not live right now — whether it used to be live (unpublished/
+    // rescheduled) or never was, there's nothing to (re)generate while
+    // it's offline. wasLive still gets persisted by the caller so the
+    // eventual "published" transition can be detected later.
+    return "unchanged";
+  }
+  if (!params.wasLive) {
+    // The actual fix: going from not-live to live is a trigger on its
+    // own, independent of content — the body may have been written and
+    // hashed long before the article ever went live.
+    return "published";
+  }
+  return params.hashChanged ? "updated" : "unchanged";
+}
+
 // Diffs one Shopify article against the stored copy and enqueues
-// extraction only when the content actually changed — a re-poll of an
-// untouched article, or a typo-fix save, is a no-op here rather than a
+// extraction when the content changed OR the article just went live for
+// the first time (see decideSyncAction) — a re-poll of an untouched,
+// already-live article, or a typo-fix save, is a no-op here rather than a
 // fresh extract_article job. Shared by the daily poll cron; used to be
 // shared with a webhook receiver too, before confirming Shopify has no
 // webhook topic for blog articles at all (neither the GraphQL
@@ -114,6 +158,8 @@ export async function syncArticleFromShopify(db: typeof DbClient, payload: Shopi
   const contentHash = hashArticleContent(bodyHtml);
   const shopifyArticleId = String(payload.id);
   const tags = payload.tags ? payload.tags.split(",").map((t) => t.trim()).filter(Boolean) : [];
+  const shopifyPublishedAt = payload.published_at ? new Date(payload.published_at) : null;
+  const isLive = isArticleLive(payload.published_at);
 
   const [existing] = await db
     .select()
@@ -121,7 +167,24 @@ export async function syncArticleFromShopify(db: typeof DbClient, payload: Shopi
     .where(eq(articles.shopifyArticleId, shopifyArticleId))
     .limit(1);
 
-  if (!existing) {
+  const wasLive = existing ? isArticleLive(existing.shopifyPublishedAt?.toISOString() ?? null) : false;
+  const action = decideSyncAction({
+    existing: Boolean(existing),
+    wasLive,
+    isLive,
+    hashChanged: existing ? existing.contentHash !== contentHash : false,
+  });
+
+  if (action === "skipped_unpublished") {
+    // Not inserted at all — Shopify bumps an article's updated_at the
+    // moment it actually goes live (confirmed directly: a republished
+    // article's updatedAt and publishedAt landed on the same timestamp),
+    // so this article will resurface on its own in a future poll once
+    // it's really live, and get created normally at that point.
+    return { status: "skipped_unpublished", articleId: null, extractionQueued: false };
+  }
+
+  if (action === "created") {
     const [inserted] = await db
       .insert(articles)
       .values({
@@ -132,6 +195,7 @@ export async function syncArticleFromShopify(db: typeof DbClient, payload: Shopi
         bodyHtml,
         tags,
         shopifyUpdatedAt: new Date(payload.updated_at),
+        shopifyPublishedAt,
         contentHash,
         status: "new",
       })
@@ -143,14 +207,21 @@ export async function syncArticleFromShopify(db: typeof DbClient, payload: Shopi
     return { status: "created", articleId: inserted.id, extractionQueued: true };
   }
 
-  if (existing.contentHash === contentHash) {
+  // existing is guaranteed here — the only actions left (unchanged/
+  // published/updated) all require existing: true in decideSyncAction.
+  const existingId = existing!.id;
+
+  if (action === "unchanged") {
     await db
       .update(articles)
-      .set({ shopifyUpdatedAt: new Date(payload.updated_at), fetchedAt: new Date() })
-      .where(eq(articles.id, existing.id));
-    return { status: "unchanged", articleId: existing.id, extractionQueued: false };
+      .set({ shopifyUpdatedAt: new Date(payload.updated_at), shopifyPublishedAt, fetchedAt: new Date() })
+      .where(eq(articles.id, existingId));
+    return { status: "unchanged", articleId: existingId, extractionQueued: false };
   }
 
+  // "published" (went live, content unchanged from when it was drafted)
+  // or "updated" (already live, content actually changed) — both refresh
+  // the stored copy and enqueue extraction the same way.
   await db
     .update(articles)
     .set({
@@ -159,13 +230,14 @@ export async function syncArticleFromShopify(db: typeof DbClient, payload: Shopi
       bodyHtml,
       tags,
       shopifyUpdatedAt: new Date(payload.updated_at),
+      shopifyPublishedAt,
       contentHash,
       status: "new",
       fetchedAt: new Date(),
     })
-    .where(eq(articles.id, existing.id));
-  await enqueueJob(db, "extract_article", { articleId: existing.id });
-  return { status: "updated", articleId: existing.id, extractionQueued: true };
+    .where(eq(articles.id, existingId));
+  await enqueueJob(db, "extract_article", { articleId: existingId });
+  return { status: action, articleId: existingId, extractionQueued: true };
 }
 
 const SHOPIFY_ARTICLES_CURSOR_KEY = "shopify_articles";

@@ -100,6 +100,12 @@ export const articles = pgTable("articles", {
   bodyHtml: text("body_html").notNull(),
   tags: text("tags").array().notNull().default([]),
   shopifyUpdatedAt: timestamp("shopify_updated_at", { withTimezone: true }).notNull(),
+  // Null means unpublished/draft; a future timestamp means scheduled but
+  // not live yet. See isArticleLive/decideSyncAction in
+  // src/lib/platforms/shopify-articles.ts — this is what lets the sync
+  // treat a publish-date change as its own trigger, independent of
+  // whether the article body itself changed.
+  shopifyPublishedAt: timestamp("shopify_published_at", { withTimezone: true }),
   contentHash: text("content_hash").notNull(),
   status: text("status").notNull().default("new"), // new | processing | processed | error
   fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
