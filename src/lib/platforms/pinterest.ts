@@ -3,9 +3,24 @@ import { classifyPinterestError } from "./errors";
 // Pinterest API v5. Request/response shapes follow Pinterest's public
 // docs; not exercised against a live call in this environment (the
 // outbound proxy blocks api.pinterest.com by policy) — see errors.ts.
-const API_BASE = "https://api.pinterest.com/v5";
+const PRODUCTION_API_BASE = "https://api.pinterest.com/v5";
+// Trial-access apps (the default until Pinterest approves Standard/
+// production access) get a hard 403 from every pin-creation call
+// against PRODUCTION_API_BASE — confirmed against a real publish
+// attempt, not from docs. This lets pin/board calls target Pinterest's
+// sandbox host instead, same OAuth token, so the app can produce a real
+// demo pin for the access-request review while still on Trial access.
+// PINTEREST_USE_SANDBOX is a manual, temporary toggle (unset/"false" by
+// default) — leaving it on after Standard access is granted would
+// silently keep routing real publishes to the sandbox instead of
+// production.
+const SANDBOX_API_BASE = "https://api-sandbox.pinterest.com/v5";
 const OAUTH_AUTHORIZE_URL = "https://www.pinterest.com/oauth/";
 const OAUTH_TOKEN_URL = "https://api.pinterest.com/v5/oauth/token";
+
+function apiBase(): string {
+  return process.env.PINTEREST_USE_SANDBOX === "true" ? SANDBOX_API_BASE : PRODUCTION_API_BASE;
+}
 
 // pins:write / boards:read+write to create pins and resolve suggested
 // board names to real board IDs; *_secret scopes so secret boards
@@ -62,7 +77,7 @@ export function refreshPinterestToken(clientId: string, clientSecret: string, re
 }
 
 async function pinterestApiRequest<T>(accessToken: string, path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(`${apiBase()}${path}`, {
     ...init,
     headers: {
       Authorization: `Bearer ${accessToken}`,
