@@ -38,7 +38,7 @@ export function instagramSlide({ slideText, imageSrc, slideIndex, slideCount }: 
           background: "linear-gradient(to top, rgba(0,0,0,0.88), rgba(0,0,0,0))",
         }}
       >
-        <div style={{ color: BRAND_ACCENT, fontSize: 26, fontWeight: 700, letterSpacing: 2 }}>
+        <div style={{ display: "flex", color: BRAND_ACCENT, fontSize: 26, fontWeight: 700, letterSpacing: 2 }}>
           {slideIndex + 1} / {slideCount}
         </div>
         <div style={{ color: "white", fontSize: 46, fontWeight: 700, lineHeight: 1.2, marginTop: 12 }}>
