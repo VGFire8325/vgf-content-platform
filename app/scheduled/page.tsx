@@ -42,6 +42,8 @@ export default async function ScheduledPage() {
         <a href="/review">Back to Review Queue</a>
         {" · "}
         <a href="/assets">Asset Library</a>
+        {" · "}
+        <a href="/connections">Connections &amp; Policy</a>
       </p>
       {rows.length === 0 ? (
         <p>Nothing scheduled right now.</p>

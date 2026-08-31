@@ -15,6 +15,8 @@ export default async function AssetsPage() {
         <a href="/review">Back to Review Queue</a>
         {" · "}
         <a href="/scheduled">View Scheduled</a>
+        {" · "}
+        <a href="/connections">Connections &amp; Policy</a>
       </p>
 
       <section className="upload-section">

@@ -197,3 +197,38 @@ button {
   border-radius: 4px;
 }
 button.delete { background: #c62828; color: white; }
+
+section { margin-bottom: 40px; }
+
+.status-connected { background: #d4edda; }
+.status-not_connected { background: #eee; color: #888; }
+.status-expired,
+.status-revoked { background: #f8d7da; }
+
+.status-policy-manual { background: #d1ecf1; }
+.status-policy-trusted { background: #fcf8e3; color: #8a6d3b; }
+.status-policy-autonomous { background: #f8d7da; color: #842029; }
+
+.policy-caveat {
+  font-size: 13px;
+  color: #555;
+  background: #fcf8e3;
+  border: 1px solid #faebcc;
+  border-radius: 6px;
+  padding: 10px 14px;
+  max-width: 640px;
+}
+
+.policy-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+.policy-option {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 13px;
+}
+.policy-option input { margin-top: 3px; }
