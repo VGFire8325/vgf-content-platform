@@ -1,18 +1,25 @@
 import { classifyLinkedInError } from "./errors";
 
 // LinkedIn Community Management API. Request/response shapes follow
-// LinkedIn's public docs; not exercised against a live call in this
-// environment (the outbound proxy blocks linkedin.com/api.linkedin.com
-// by policy, same restriction as Pinterest/Meta) — see errors.ts.
+// LinkedIn's public docs — this environment's own outbound proxy still
+// blocks linkedin.com/api.linkedin.com (same restriction as Pinterest/
+// Meta), but the OAuth callback has now been exercised for real from
+// production, which is how the stale-version bug below was caught.
 const API_BASE = "https://api.linkedin.com/rest";
 const OAUTH_AUTHORIZE_URL = "https://www.linkedin.com/oauth/v2/authorization";
 const OAUTH_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken";
 
-// LinkedIn versions its REST API by calendar month (YYYYMM) and only
-// supports a rolling ~12 months of versions — this needs bumping
-// periodically or calls will eventually start failing with a version
-// deprecation error, not a code bug.
-const LINKEDIN_API_VERSION = "202506";
+// LinkedIn versions its REST API by calendar month (YYYYMM), releases
+// a new one monthly, and supports each for a minimum of ~12 months —
+// this needs bumping periodically or calls start failing with a
+// "Requested version ... is not active" error, not a code bug. That's
+// exactly what took down the LinkedIn OAuth callback in production:
+// "202506" had aged out. Bumped to "202606" here (mid-window, not the
+// bleeding-edge release, so it doesn't flip straight to "nonexistent
+// version" the month it's checked) — reconfirm this is still active
+// the next time this bites, rather than assuming today's date means
+// it's still fine.
+const LINKEDIN_API_VERSION = "202606";
 
 // w_organization_social/r_organization_social to create and read posts
 // as the organization; rw_organization_admin to list which
