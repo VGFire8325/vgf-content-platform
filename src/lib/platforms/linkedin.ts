@@ -137,10 +137,56 @@ export async function listAdministeredOrganizations(accessToken: string): Promis
   return organizations;
 }
 
+// Images API: uploading a real photo to attach as the article's
+// thumbnail is a separate two-step dance from creating the post itself
+// — register the upload (get back a pre-signed URL + the urn:li:image
+// id the post will reference), then PUT the raw bytes to that URL.
+// That URL lives on LinkedIn's dms-uploads host, not api.linkedin.com,
+// so it's a plain authenticated PUT, not routed through
+// linkedInApiRequest (no LinkedIn-Version/Restli headers involved).
+interface InitializeUploadResponse {
+  value: { uploadUrl: string; image: string };
+}
+
+async function initializeImageUpload(accessToken: string, organizationUrn: string): Promise<InitializeUploadResponse["value"]> {
+  const response = await linkedInApiRequest(accessToken, "/images?action=initializeUpload", {
+    method: "POST",
+    body: JSON.stringify({ initializeUploadRequest: { owner: organizationUrn } }),
+  });
+  const json = (await response.json()) as InitializeUploadResponse;
+  return json.value;
+}
+
+// Returns the urn:li:image:{id} to reference as content.article.thumbnail
+// on the post created right after this.
+export async function uploadLinkedInImage(
+  accessToken: string,
+  organizationUrn: string,
+  imageBytes: Buffer,
+  contentType: string,
+): Promise<string> {
+  const { uploadUrl, image } = await initializeImageUpload(accessToken, organizationUrn);
+  const uploadResponse = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": contentType },
+    body: new Uint8Array(imageBytes),
+  });
+  if (!uploadResponse.ok) {
+    throw new Error(`LinkedIn image upload failed: ${uploadResponse.status}`);
+  }
+  return image;
+}
+
 export interface CreateOrganizationPostInput {
   text: string;
   link: string;
   linkTitle: string;
+  // Optional because a post can still go out as a plain link card
+  // without one — unlike Pinterest/Instagram, a LinkedIn post is
+  // complete without an image, so callers degrade to no thumbnail
+  // rather than blocking the publish on a missing asset.
+  thumbnail?: string;
+  thumbnailAltText?: string;
 }
 
 export interface CreateOrganizationPostResult {
@@ -172,6 +218,12 @@ export async function createOrganizationPost(
         article: {
           source: input.link,
           title: input.linkTitle,
+          // LinkedIn's Posts API does not scrape the URL for a
+          // thumbnail the way the old share API did — omitting this
+          // is exactly why the first live post went out as a bare
+          // title+domain card with no image.
+          ...(input.thumbnail ? { thumbnail: input.thumbnail } : {}),
+          ...(input.thumbnailAltText ? { thumbnailAltText: input.thumbnailAltText } : {}),
         },
       },
       lifecycleState: "PUBLISHED",

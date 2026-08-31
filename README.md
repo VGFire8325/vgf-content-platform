@@ -25,18 +25,46 @@ whenever that's revisited, no code changes needed to resume it.
 8. **Auth**: Supabase magic-link sign-in (`/login`, `/auth/callback`), allow-listed to a single `ADMIN_EMAIL`, gating every route via `middleware.ts` except the `/api/cron/*` routes, which authenticate themselves via Vercel Cron's `CRON_SECRET` bearer token instead.
 9. **Asset Library** (`/assets`): the library was empty until now, which meant every Pinterest/Instagram item was landing in Review flagged `needs_asset` with nothing to render. Unblocked two ways — a one-time bulk import of all 108 active, in-stock Shopify products with a product photo (`source: 'shopify_product'`, tagged by vendor + product type + a keyword scan of installation style/finish so the existing tag-overlap matching in `src/lib/assets.ts` has something real to match against), and a permanent upload/tag screen (`app/assets/*`) for photos that aren't product shots — installation, lifestyle, etc. Uploads go to the same `content-assets` Storage bucket as rendered images, under a `library/` prefix (`uploadLibraryAsset` in `src/lib/storage.ts`); tags are editable in place per asset, and assets can be deleted. Excluded from the bulk import: archived products, the two non-fireplace vendors (protection plans, shipping insurance), and any product with no featured image.
 10. **Ingestion triggers on the publish transition, not the save**: `articles.shopify_published_at` now tracks Shopify's own live/scheduled/draft state (`isArticleLive`/`decideSyncAction` in `src/lib/platforms/shopify-articles.ts`), separate from the content-hash diff. A brand-new article isn't stored at all until it's actually live — it naturally resurfaces on its own once it is, since Shopify bumps `updated_at` the moment an article actually goes live (confirmed directly: a republished article's `updatedAt` and `publishedAt` landed on the same timestamp). An already-known article going from not-live to live now enqueues extraction unconditionally, even with an unchanged body — the real bug this fixes: an article drafted and hash-stored well before its scheduled publish date was silently skipped as "unchanged" the day it actually went live, since content-hash diffing alone can't see a publish-date change. The reverse direction matters too — an already-live article that gets unpublished/rescheduled stops triggering entirely while offline, so `fetchAllArticles` now explicitly requests `published_status=any` rather than trusting Shopify's default, or the "went offline" half of that cycle would go undetected and the eventual republish would look unchanged all over again. An already-live article with a real content edit still triggers exactly as before.
+11. **Connections & Policy screen** (`/connections`): per-platform connection status with an expiry warning inside 7 days, and a Manual/Trusted/Autonomous toggle backed by `brand_policies` (upserted per platform on save). Only Manual is actually enforced — nothing in the publish pipeline reads `brand_policies.mode` yet, so this stages a policy decision rather than acting on one; the page says so.
+12. **LinkedIn, exercised live against production** (first real end-to-end test of any platform integration in this project, not just against docs/fixtures): OAuth handshake, org resolution, and a real organization post all confirmed working against VGF's actual Page — see "LinkedIn Development Tier: corrected assumptions" below for what that run disproved about the docs. Two fixes came out of that test: the `LinkedIn-Version` header had aged out of LinkedIn's support window (`src/lib/platforms/linkedin.ts`, bumped `202506` → `202606` — LinkedIn only supports a rolling ~12 months, this needs periodic attention), and posts had no thumbnail image (LinkedIn's Posts API doesn't scrape the link for one, unlike the old share API) — `createOrganizationPost` now uploads an approved photo through LinkedIn's Images API and sets it as the article's `thumbnail`, using the same asset-library selection as Pinterest/Instagram (`selectLinkedInImageItem` in `app/api/cron/run-jobs/route.ts`) but without any template compositing, since a LinkedIn thumbnail is just the photo itself. Unlike Pinterest/Instagram, a missing or failed image doesn't block the publish — a LinkedIn post is still complete as a plain link card without one.
 
-Not yet built: the Article detail and Publish Log screens, and the
-Connections/Policy screen (right now connecting is a plain link on the
-home page, and there's no UI for the per-platform Manual/Trusted/
-Autonomous toggle from `brand_policies` — the table exists, the screen
-doesn't).
+### LinkedIn Development Tier: corrected assumptions
+
+A live test publish on 2026-08-31 (`/connections`'s "Very Good Fireplaces"
+org, real production data, not this dev environment — see below)
+disproved two assumptions this codebase had been carrying about
+LinkedIn's Community Management API:
+
+- **Development Tier does not block posting to a real (non-test)
+  organization Page.** LinkedIn's own docs say Development Tier is for
+  building against test pages, with Standard Tier required for
+  production use on real Pages. In practice, the OAuth org lookup
+  (`listAdministeredOrganizations`) returned VGF's actual Page, and
+  `createOrganizationPost` published to it successfully — all still on
+  Development Tier (confirmed directly against the Developer Portal's
+  product tier badge immediately before the test). Take this as "worked
+  for this app today," not as a guarantee the restriction never applies
+  — it may be enforced more selectively than the docs suggest, or apply
+  to something this test didn't exercise.
+- **A refresh_token isn't gated on Standard Tier approval either** — the
+  live connection received one while still on Development Tier. See the
+  comments in `app/api/oauth/linkedin/callback/route.ts` and
+  `app/api/cron/run-jobs/route.ts`'s `attemptRefresh`.
+
+Given that, applying for Standard Tier is less urgent than §8 of the
+plan assumed — but this was one successful post at low volume, not a
+load test. Development Tier's documented 500-requests/day (app) and
+100/day (member) caps, and any other throttling or visibility
+limitation LinkedIn applies underneath the write path, haven't been
+hit yet and are worth watching for as posting frequency increases.
+
+Not yet built: the Article detail and Publish Log screens.
 
 Verified in four tiers, in order of how real they are:
 - No live credentials needed: `npm run typecheck`, `npx next build`, and `npm test` (60 unit tests) all pass.
 - **Against a real local Postgres** (`scripts/integration-check.ts`): confirmed the Shopify article sync dedup logic, the cron auth check, the approve → auto-schedule → edit → cancel-pending-publish chain (including that a canceled target's already-enqueued job no-ops cleanly instead of trying to publish), and both `render_image` paths end to end. This caught a real bug earlier (raw-SQL snake_case vs. camelCase in `claimDueJobs`) and this round confirmed the *new* scheduling logic picks the exact right slot (`2026-08-06T14:00:00Z` for the first Pinterest pin approved with nothing else scheduled — matches the spacing rule precisely).
 - **Rendering itself** (`scripts/render-sample.ts`, no DB): produces real PNGs from both templates, verified by magic bytes/size and by looking at the output — caught a `ReferenceError: React is not defined` outside Next's JSX runtime and a webpack build failure on `@resvg/resvg-js`'s native binary (fixed via `serverExternalPackages`).
-- **What could not be verified here, and why**: the outbound proxy in this environment explicitly blocks `api.pinterest.com`, `graph.facebook.com`, `*.myshopify.com`, and (confirmed the same way when the LinkedIn client was built — `curl` to `www.linkedin.com`/`api.linkedin.com` both fail the CONNECT tunnel with a 403) `linkedin.com`/`api.linkedin.com`, so none of the actual Pinterest/Meta/Shopify/LinkedIn HTTP calls were ever made — the clients are built against each platform's stable, documented contract, and the error-classification logic (`src/lib/platforms/errors.ts`) is unit-tested against realistic fixtures instead of a live response. Supabase Vault is a Supabase-platform extension unavailable in a plain local Postgres, so `src/lib/vault.ts` is typecheck-verified only. Supabase Auth (magic-link) likewise needs a real Supabase project — `middleware.ts` and the login/callback routes are typecheck- and build-verified only. All of the above need Brendan's real Pinterest/Meta/Shopify apps and Supabase project to exercise for real — flagging this plainly rather than overstating what a green test suite proves here.
+- **What could not be verified here, and why**: the outbound proxy in this environment explicitly blocks `api.pinterest.com`, `graph.facebook.com`, `*.myshopify.com`, and `linkedin.com`/`api.linkedin.com` (confirmed directly — `curl` to any of them fails the CONNECT tunnel with a 403), so none of the actual Pinterest/Meta/Shopify HTTP calls have been made from this environment, and neither had LinkedIn's until production did it directly — the OAuth handshake, org resolution, and a real post all succeeded against VGF's live Page from the deployed app (see "LinkedIn Development Tier: corrected assumptions" above), which is also how the stale `LinkedIn-Version` bug and the missing-thumbnail gap were actually caught. Pinterest/Meta/Shopify's clients remain built against each platform's stable, documented contract only, and the error-classification logic (`src/lib/platforms/errors.ts`) is unit-tested against realistic fixtures instead of a live response for those three. Supabase Vault is a Supabase-platform extension unavailable in a plain local Postgres, so `src/lib/vault.ts` is typecheck-verified only. Supabase Auth (magic-link) likewise needs a real Supabase project — `middleware.ts` and the login/callback routes are typecheck- and build-verified only. All of the above need Brendan's real Pinterest/Meta/Shopify apps and Supabase project to exercise for real — flagging this plainly rather than overstating what a green test suite proves here.
 
 ### Re-running the integration check
 

@@ -59,10 +59,12 @@ export async function GET(request: Request) {
       .where(eq(platformConnections.id, existing.id));
   } else {
     const accessTokenVaultId = await storeSecret(db, tokens.access_token, "linkedin_access_token");
-    // A refresh_token is only issued once the app's Community Management
-    // API approval includes refresh access — absent that, this stays
-    // null and the connection needs re-authorizing when the access
-    // token expires, same as any other unrefreshable connection.
+    // Whether a refresh_token shows up here isn't reliably tied to
+    // Standard Tier approval — the live production connection got one
+    // while still on Development Tier (confirmed against the real
+    // token response, not assumed). Handled the same either way:
+    // present or absent, this stays optional and the connection just
+    // needs re-authorizing when the access token expires if it's null.
     const refreshTokenVaultId = tokens.refresh_token
       ? await storeSecret(db, tokens.refresh_token, "linkedin_refresh_token")
       : null;

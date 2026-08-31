@@ -18,7 +18,7 @@ import { requireEnv } from "@/lib/env";
 import { CONTENT_TYPE_BY_PLATFORM, generatePlatformContent, groundPosts } from "@/lib/generation";
 import { claimDueJobs, enqueueJob, markJobFailed, markJobSucceeded } from "@/lib/jobs";
 import { PlatformAuthError, PlatformValidationError } from "@/lib/platforms/errors";
-import { createOrganizationPost, refreshLinkedInToken } from "@/lib/platforms/linkedin";
+import { createOrganizationPost, refreshLinkedInToken, uploadLinkedInImage } from "@/lib/platforms/linkedin";
 import { createInstagramCarousel, createPagePost, refreshMetaUserToken } from "@/lib/platforms/meta";
 import { createPin, findOrCreateBoard, refreshPinterestToken } from "@/lib/platforms/pinterest";
 import { selectAssetForArticle, selectAssetsForArticle, type ArticleMatchContext } from "@/lib/assets";
@@ -123,11 +123,13 @@ async function runGenerateContent(job: Job) {
     )
     .returning();
 
-  // Only Pinterest and Instagram have templates/compositors implemented
-  // so far — see runRenderImage below. Facebook and LinkedIn's visual
-  // concepts stay text-only in copyFields (Facebook doesn't need a
-  // rendered image at all; LinkedIn has no publish path yet in V1).
-  if (platform === "pinterest" || platform === "instagram") {
+  // Pinterest and Instagram need an actual rendered graphic (Satori
+  // template + compositing); LinkedIn just attaches an approved photo
+  // as-is for the article thumbnail, no compositing — but it goes
+  // through the same render_image job and asset-selection pass so a
+  // matched (or missing) photo is visible in Review before publish,
+  // same as Pinterest. Facebook doesn't use an image at all.
+  if (platform === "pinterest" || platform === "instagram" || platform === "linkedin") {
     for (const row of insertedItems) {
       await enqueueJob(db, "render_image", { contentItemId: row.id });
     }
@@ -233,6 +235,40 @@ async function renderInstagramCarouselItem(
   }
 }
 
+// Unlike the Pinterest/Instagram renderers above, this doesn't
+// composite anything — LinkedIn's article thumbnail is just the
+// approved photo itself, no template or overlaid text — so this only
+// records which asset to use. Still writes a content_assets row with
+// status "rendered" (or "needs_asset" with nothing else set, same as
+// Pinterest) so it's visible in Review before publish and so
+// runPublishPost's LinkedIn branch can find it with the identical
+// query Pinterest/Instagram already use.
+async function selectLinkedInImageItem(
+  item: ContentItemRow,
+  article: ArticleRow,
+  client: Anthropic,
+  extraction: ExtractionRow | undefined,
+) {
+  const asset = await selectAssetForArticle(db, client, toMatchContext(article, extraction));
+
+  if (!asset) {
+    await db.insert(contentAssets).values({
+      contentItemId: item.id,
+      sourceType: "asset_library",
+      status: "needs_asset",
+    });
+    return;
+  }
+
+  await db.insert(contentAssets).values({
+    contentItemId: item.id,
+    sourceType: "asset_library",
+    sourceAssetId: asset.id,
+    fileUrl: asset.fileUrl,
+    status: "rendered",
+  });
+}
+
 async function runRenderImage(job: Job) {
   const { contentItemId, templateId } = job.payload as { contentItemId: string; templateId?: PinterestTemplateId };
   const [item] = await db.select().from(contentItems).where(eq(contentItems.id, contentItemId)).limit(1);
@@ -259,6 +295,9 @@ async function runRenderImage(job: Job) {
   }
   if (item.platform === "instagram" && item.contentType === "ig_carousel") {
     return renderInstagramCarouselItem(item, article, client, extraction);
+  }
+  if (item.platform === "linkedin" && item.contentType === "linkedin_post") {
+    return selectLinkedInImageItem(item, article, client, extraction);
   }
   throw new NonRetryableJobError(`render_image has no template for ${item.platform}/${item.contentType} yet`);
 }
@@ -333,9 +372,10 @@ async function attemptRefresh(connection: PlatformConnectionRow): Promise<string
     return refreshed.access_token;
   }
   if (connection.platform === "linkedin") {
-    // No refresh_token stored means this connection's app grant doesn't
-    // include refresh access — same "give up, mark expired" outcome as
-    // any other unrefreshable connection, not a special case here.
+    // No refresh_token stored means this specific connection didn't get
+    // one (not necessarily a tier limitation — see the callback route's
+    // comment) — same "give up, mark expired" outcome as any other
+    // unrefreshable connection either way.
     if (!connection.refreshTokenVaultId) return null;
     const { LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET } = requireEnv("LINKEDIN_CLIENT_ID", "LINKEDIN_CLIENT_SECRET");
     const refreshToken = await readSecret(db, connection.refreshTokenVaultId);
@@ -427,10 +467,36 @@ async function runPublishPost(job: Job) {
     }
     if (item.platform === "linkedin") {
       const copy = item.copyFields as { postText: string };
+      // Unlike Pinterest/Instagram, a missing image doesn't block this
+      // publish — a LinkedIn post is already complete as a plain link
+      // card, so a needs_asset (or not-yet-selected) row just means no
+      // thumbnail this time, not a retry.
+      const [asset] = await db
+        .select()
+        .from(contentAssets)
+        .where(and(eq(contentAssets.contentItemId, item.id), eq(contentAssets.status, "rendered")))
+        .orderBy(desc(contentAssets.createdAt))
+        .limit(1);
+
+      let thumbnail: string | undefined;
+      if (asset?.fileUrl) {
+        const imageResponse = await fetch(asset.fileUrl);
+        if (imageResponse.ok) {
+          const contentType = imageResponse.headers.get("content-type") ?? "image/jpeg";
+          const imageBytes = Buffer.from(await imageResponse.arrayBuffer());
+          thumbnail = await uploadLinkedInImage(accessToken, connection.externalAccountId, imageBytes, contentType);
+        }
+        // A fetch/upload failure here falls back to no thumbnail rather
+        // than failing the whole publish — same "post is still complete
+        // without it" reasoning as a missing asset.
+      }
+
       return createOrganizationPost(accessToken, connection.externalAccountId, {
         text: copy.postText,
         link,
         linkTitle: article.title,
+        thumbnail,
+        thumbnailAltText: thumbnail ? article.title : undefined,
       });
     }
     if (item.platform === "instagram") {
