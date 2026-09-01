@@ -4,6 +4,7 @@ import { db } from "@/db/client";
 import { platformConnections } from "@/db/schema";
 import { requireEnv } from "@/lib/env";
 import { LINKEDIN_SCOPES, exchangeLinkedInCode, listAdministeredOrganizations } from "@/lib/platforms/linkedin";
+import { scheduleUnscheduledApprovedItems } from "@/lib/publish-scheduling";
 import { storeSecret, updateSecret } from "@/lib/vault";
 
 export const runtime = "nodejs";
@@ -79,6 +80,12 @@ export async function GET(request: Request) {
       status: "connected",
     });
   }
+
+  // Catches up any item approved before this connection existed (or
+  // while it was expired) — this is the exact gap that left four real
+  // LinkedIn items stuck in 'approved' with no publish_targets row
+  // until this connection was made today.
+  await scheduleUnscheduledApprovedItems(db, "linkedin");
 
   return Response.redirect(`${APP_BASE_URL}/review`, 302);
 }

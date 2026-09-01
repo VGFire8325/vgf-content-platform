@@ -4,6 +4,7 @@ import { db } from "@/db/client";
 import { platformConnections } from "@/db/schema";
 import { requireEnv } from "@/lib/env";
 import { META_SCOPES, exchangeMetaCode, listConnectedPages, refreshMetaUserToken } from "@/lib/platforms/meta";
+import { scheduleUnscheduledApprovedItems } from "@/lib/publish-scheduling";
 import { storeSecret, updateSecret } from "@/lib/vault";
 
 export const runtime = "nodejs";
@@ -71,6 +72,11 @@ export async function GET(request: Request) {
       page.access_token,
     );
   }
+
+  // Only Facebook auto-schedules on approve (Instagram never does, per
+  // scheduleApprovedItem — it needs a rendered carousel regardless of
+  // connection status), so only Facebook has a catch-up gap to sweep.
+  await scheduleUnscheduledApprovedItems(db, "facebook");
 
   return Response.redirect(`${APP_BASE_URL}/review`, 302);
 }

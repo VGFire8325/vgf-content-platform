@@ -9,15 +9,14 @@ import {
   contentItems,
   editFieldTargetEnum,
   editInstructions,
-  platformConnections,
   publishTargets,
 } from "@/db/schema";
 import { createAnthropicClient } from "@/lib/anthropic";
 import { editPlatformPost, groundPosts, type PlatformPost } from "@/lib/generation";
 import { requireEnv } from "@/lib/env";
 import { enqueueJob } from "@/lib/jobs";
+import { scheduleApprovedItem } from "@/lib/publish-scheduling";
 import { CANCELABLE_PUBLISH_STATUSES, nextStatusAfterEdit, shouldCancelPendingPublish } from "@/lib/review";
-import { nextFacebookSlot, nextLinkedInSlot, nextPinterestSlot } from "@/lib/scheduling";
 import { PINTEREST_TEMPLATE_IDS, type PinterestTemplateId } from "@/lib/templates/pinterest";
 
 const REVIEW_PATH = "/review";
@@ -43,47 +42,6 @@ async function cancelPendingPublishes(contentItemId: string) {
     );
 }
 
-// Only platforms with a live connection AND a publish client get
-// scheduled automatically — everything else stays 'approved' until both
-// exist (Instagram until its image template exists; Pinterest/
-// Facebook/LinkedIn until Brendan connects them). LinkedIn moved off
-// the "deferred out of V1" list in §2 once Community Management API
-// access was applied for and the client got built — see
-// src/lib/platforms/linkedin.ts.
-async function scheduleApprovedItem(item: typeof contentItems.$inferSelect) {
-  if (item.platform !== "pinterest" && item.platform !== "facebook" && item.platform !== "linkedin") {
-    return;
-  }
-  const [connection] = await db
-    .select()
-    .from(platformConnections)
-    .where(and(eq(platformConnections.platform, item.platform), eq(platformConnections.status, "connected")))
-    .limit(1);
-  if (!connection) {
-    return;
-  }
-
-  const scheduledAt =
-    item.platform === "pinterest"
-      ? await nextPinterestSlot(db)
-      : item.platform === "facebook"
-        ? await nextFacebookSlot(db)
-        : await nextLinkedInSlot(db);
-  const [target] = await db
-    .insert(publishTargets)
-    .values({ contentItemId: item.id, platformConnectionId: connection.id, scheduledAt, status: "scheduled" })
-    .returning();
-  if (!target) {
-    throw new Error("Insert into publish_targets returned no row");
-  }
-
-  await db.update(contentItems).set({ status: "scheduled" }).where(eq(contentItems.id, item.id));
-  // run_at = scheduledAt, so the cron runner won't claim this until the
-  // actual scheduled time — this is how "spread posts out over time"
-  // (§4) actually happens, not a separate scheduler process.
-  await enqueueJob(db, "publish_post", { publishTargetId: target.id }, scheduledAt);
-}
-
 export async function approveContentItem(formData: FormData) {
   const id = requireString(formData, "id");
   // Gated on the current status in the same UPDATE (not a separate
@@ -98,7 +56,7 @@ export async function approveContentItem(formData: FormData) {
     .where(and(eq(contentItems.id, id), eq(contentItems.status, "in_review")))
     .returning();
   if (updated) {
-    await scheduleApprovedItem(updated);
+    await scheduleApprovedItem(db, updated);
   }
   revalidatePath(REVIEW_PATH);
 }
@@ -126,7 +84,7 @@ export async function approveAllInReview(formData: FormData) {
     .where(and(...conditions))
     .returning();
   for (const item of updated) {
-    await scheduleApprovedItem(item);
+    await scheduleApprovedItem(db, item);
   }
   revalidatePath(REVIEW_PATH);
 }

@@ -4,6 +4,7 @@ import { db } from "@/db/client";
 import { platformConnections } from "@/db/schema";
 import { requireEnv } from "@/lib/env";
 import { PINTEREST_SCOPES, exchangePinterestCode } from "@/lib/platforms/pinterest";
+import { scheduleUnscheduledApprovedItems } from "@/lib/publish-scheduling";
 import { storeSecret, updateSecret } from "@/lib/vault";
 
 export const runtime = "nodejs";
@@ -62,6 +63,12 @@ export async function GET(request: Request) {
       status: "connected",
     });
   }
+
+  // Catches up any item approved before this connection existed (or
+  // while it was expired) — approving only ever schedules once, at
+  // approve time, so without this an item approved too early would sit
+  // in 'approved' forever even after reconnecting.
+  await scheduleUnscheduledApprovedItems(db, "pinterest");
 
   return Response.redirect(`${APP_BASE_URL}/review`, 302);
 }
