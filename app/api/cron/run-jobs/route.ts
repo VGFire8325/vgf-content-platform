@@ -62,11 +62,14 @@ async function runExtractArticle(job: Job) {
   }
   await db.update(articles).set({ status: "processed" }).where(eq(articles.id, article.id));
 
-  // Fan out one generate_content job per platform — copy generation for
-  // all four happens regardless of which platforms can auto-publish yet
-  // (LinkedIn copy still has value even though V1 publishes it manually,
-  // per docs/PHASE_0_PLAN.md §2).
-  for (const platform of platformEnum.enumValues) {
+  // Fan out one generate_content job per enabled platform. Facebook and
+  // Instagram are paused here (not a code removal) at Brendan's request
+  // while LinkedIn/Pinterest cadence and quality get sorted out first —
+  // existing Facebook/Instagram content already in the pipeline is
+  // untouched, this only stops new articles from generating more of it.
+  // Flip GENERATION_ENABLED_PLATFORMS back to all four when he says so.
+  const GENERATION_ENABLED_PLATFORMS: Platform[] = ["pinterest", "linkedin"];
+  for (const platform of GENERATION_ENABLED_PLATFORMS) {
     await enqueueJob(db, "generate_content", { articleId: article.id, extractionId: inserted.id, platform });
   }
 }

@@ -160,6 +160,18 @@ function editToolForPlatform(platform: Platform): Anthropic.Tool {
   };
 }
 
+// postsArraySchema only enforces .min(1) — the model has been observed
+// returning more posts than POSTS_PER_PLATFORM asks for (LinkedIn in
+// particular: confirmed in production returning 2-3 "angles" for a
+// platform meant to get exactly 1 per article, on roughly half of real
+// generations since this was first built). Truncating here makes the
+// cap actually a cap instead of a prompt suggestion the model is free
+// to ignore. Pure and exported so it's unit-testable without a live
+// model call.
+export function capPostsToPlatformLimit<T>(platform: Platform, posts: T[]): T[] {
+  return posts.slice(0, POSTS_PER_PLATFORM[platform]);
+}
+
 export async function generatePlatformContent(
   client: Anthropic,
   platform: Platform,
@@ -174,7 +186,7 @@ export async function generatePlatformContent(
     schema: postsArraySchema(platform),
     maxTokens: 2048,
   });
-  return result.posts;
+  return capPostsToPlatformLimit(platform, result.posts);
 }
 
 // Revises a single already-generated post per a reviewer instruction —
