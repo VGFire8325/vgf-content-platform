@@ -36,6 +36,13 @@
       "when": 1786912000000,
       "tag": "0004_add_shopify_published_at",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788478348287,
+      "tag": "0005_cuddly_carmella_unuscione",
+      "breakpoints": true
     }
   ]
 }

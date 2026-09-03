@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
 import { contentItems, platformConnections, publishTargets } from "@/db/schema";
 import { enqueueJob } from "@/lib/jobs";
-import { nextFacebookSlot, nextLinkedInSlot, nextPinterestSlot } from "@/lib/scheduling";
+import { nextFacebookSlot, nextLinkedInCampaignSlot, nextLinkedInSlot, nextPinterestSlot } from "@/lib/scheduling";
 
 type ContentItemRow = typeof contentItems.$inferSelect;
 type AutoSchedulePlatform = "pinterest" | "facebook" | "linkedin";
@@ -39,12 +39,17 @@ export async function scheduleApprovedItem(db: typeof DbClient, item: ContentIte
     return;
   }
 
+  // A campaign-tagged LinkedIn item (e.g. the evergreen-backlog "blitz")
+  // gets its own daily cadence, independent of the normal weekly one —
+  // see nextLinkedInCampaignSlot's doc comment in scheduling.ts for why.
   const scheduledAt =
     item.platform === "pinterest"
       ? await nextPinterestSlot(db)
       : item.platform === "facebook"
         ? await nextFacebookSlot(db)
-        : await nextLinkedInSlot(db);
+        : item.campaign
+          ? await nextLinkedInCampaignSlot(db, item.campaign)
+          : await nextLinkedInSlot(db);
   const [target] = await db
     .insert(publishTargets)
     .values({ contentItemId: item.id, platformConnectionId: connection.id, scheduledAt, status: "scheduled" })

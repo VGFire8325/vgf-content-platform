@@ -1,6 +1,6 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { db as DbClient } from "@/db/client";
-import { platformConnections, publishTargets } from "@/db/schema";
+import { contentItems, platformConnections, publishTargets } from "@/db/schema";
 
 // Deliberately boring per docs/PHASE_0_PLAN.md §1/§4: "spread pins out
 // over time" becomes a fixed daily cap and spacing, not a smart
@@ -66,13 +66,23 @@ function pickWeeklySlot(lastScheduledAt: Date | null, now: Date): Date {
   return weekLater.getTime() < now.getTime() ? new Date(now.getTime() + 60 * 60 * 1000) : weekLater;
 }
 
+// Excludes campaign-tagged content items (isNull(contentItems.campaign))
+// so a one-off campaign's own dense schedule (see
+// nextLinkedInCampaignSlot below) never counts as "the latest post" for
+// the normal weekly cadence — the two are meant to run as independent
+// streams, not push each other around.
 async function nextWeeklySlot(db: typeof DbClient, platform: "facebook" | "linkedin"): Promise<Date> {
   const [latest] = await db
     .select({ scheduledAt: publishTargets.scheduledAt })
     .from(publishTargets)
     .innerJoin(platformConnections, eq(publishTargets.platformConnectionId, platformConnections.id))
+    .innerJoin(contentItems, eq(publishTargets.contentItemId, contentItems.id))
     .where(
-      and(eq(platformConnections.platform, platform), inArray(publishTargets.status, ["scheduled", "publishing", "published"])),
+      and(
+        eq(platformConnections.platform, platform),
+        isNull(contentItems.campaign),
+        inArray(publishTargets.status, ["scheduled", "publishing", "published"]),
+      ),
     )
     .orderBy(desc(publishTargets.scheduledAt))
     .limit(1);
@@ -93,4 +103,38 @@ export function pickLinkedInSlot(lastScheduledAt: Date | null, now: Date): Date 
 
 export function nextLinkedInSlot(db: typeof DbClient): Promise<Date> {
   return nextWeeklySlot(db, "linkedin");
+}
+
+// One-off campaign cadence (the evergreen-content "blitz" being the
+// first use): daily instead of weekly, scoped to posts tagged with the
+// given campaign so it can run at its own pace without touching — or
+// being touched by — the normal weekly cadence above. First slot is
+// tomorrow (not "~1 hour from now" like the weekly cadence), since a
+// same-day post isn't the point of a paced daily backlog release.
+export function pickCampaignDailySlot(lastScheduledAt: Date | null, now: Date): Date {
+  if (!lastScheduledAt) {
+    const tomorrow = new Date(now);
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+    return tomorrow;
+  }
+  const dayLater = new Date(lastScheduledAt.getTime() + 24 * 60 * 60 * 1000);
+  return dayLater.getTime() < now.getTime() ? new Date(now.getTime() + 60 * 60 * 1000) : dayLater;
+}
+
+export async function nextLinkedInCampaignSlot(db: typeof DbClient, campaign: string): Promise<Date> {
+  const [latest] = await db
+    .select({ scheduledAt: publishTargets.scheduledAt })
+    .from(publishTargets)
+    .innerJoin(platformConnections, eq(publishTargets.platformConnectionId, platformConnections.id))
+    .innerJoin(contentItems, eq(publishTargets.contentItemId, contentItems.id))
+    .where(
+      and(
+        eq(platformConnections.platform, "linkedin"),
+        eq(contentItems.campaign, campaign),
+        inArray(publishTargets.status, ["scheduled", "publishing", "published"]),
+      ),
+    )
+    .orderBy(desc(publishTargets.scheduledAt))
+    .limit(1);
+  return pickCampaignDailySlot(latest?.scheduledAt ?? null, new Date());
 }

@@ -35,7 +35,15 @@ type Job = typeof jobs.$inferSelect;
 type Platform = (typeof platformEnum.enumValues)[number];
 
 async function runExtractArticle(job: Job) {
-  const { articleId } = job.payload as { articleId: string };
+  // campaign/platforms are optional overrides for a one-off content
+  // campaign (e.g. the evergreen-backlog "blitz") — set by whatever
+  // enqueued this specific extraction, not by the normal daily poll.
+  // Absent, this behaves exactly as it always has.
+  const { articleId, campaign, platforms } = job.payload as {
+    articleId: string;
+    campaign?: string;
+    platforms?: Platform[];
+  };
   const [article] = await db.select().from(articles).where(eq(articles.id, articleId)).limit(1);
   if (!article) {
     throw new NonRetryableJobError(`Article ${articleId} not found`);
@@ -68,17 +76,20 @@ async function runExtractArticle(job: Job) {
   // existing Facebook/Instagram content already in the pipeline is
   // untouched, this only stops new articles from generating more of it.
   // Flip GENERATION_ENABLED_PLATFORMS back to all four when he says so.
+  // A campaign's own `platforms` override (e.g. the blitz's
+  // LinkedIn-only scope) takes precedence over that default.
   const GENERATION_ENABLED_PLATFORMS: Platform[] = ["pinterest", "linkedin"];
-  for (const platform of GENERATION_ENABLED_PLATFORMS) {
-    await enqueueJob(db, "generate_content", { articleId: article.id, extractionId: inserted.id, platform });
+  for (const platform of platforms ?? GENERATION_ENABLED_PLATFORMS) {
+    await enqueueJob(db, "generate_content", { articleId: article.id, extractionId: inserted.id, platform, campaign });
   }
 }
 
 async function runGenerateContent(job: Job) {
-  const { articleId, extractionId, platform } = job.payload as {
+  const { articleId, extractionId, platform, campaign } = job.payload as {
     articleId: string;
     extractionId: string;
     platform: Platform;
+    campaign?: string;
   };
 
   const [article] = await db.select().from(articles).where(eq(articles.id, articleId)).limit(1);
@@ -122,6 +133,7 @@ async function runGenerateContent(job: Job) {
         contentType,
         copyFields: { ...post, flaggedClaims: flaggedClaimsByPost[i] ?? [] },
         status: "in_review" as const,
+        campaign: campaign ?? null,
       })),
     )
     .returning();
