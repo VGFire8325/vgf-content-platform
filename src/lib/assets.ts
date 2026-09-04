@@ -69,15 +69,30 @@ export type ArticleMatchContext = {
   keyTakeaways?: string[];
 };
 
-const semanticMatchSchema = z.object({ matchedAssetIds: z.array(z.string()) });
+const semanticMatchSchema = z.object({ reasoning: z.string(), matchedAssetIds: z.array(z.string()) });
 
+// `reasoning` is required and declared first: tool_choice forces a
+// structured call with no room for free-text deliberation beforehand,
+// so without a field to think out loud in first, a genuinely borderline
+// case (e.g. "is a plain product photo an acceptable illustration for a
+// how-to/process article, since no process photography exists in this
+// library?") gets decided in one shot with no scratchpad — found via a
+// real miss where 5 untouched, clearly relevant photos were all passed
+// over on one call and one of them accepted on the very next.
 const SEMANTIC_MATCH_TOOL: Anthropic.Tool = {
   name: "record_asset_matches",
   description: "Records which approved photo asset ids reasonably illustrate the article, best first.",
   input_schema: {
     type: "object",
-    properties: { matchedAssetIds: { type: "array", items: { type: "string" } } },
-    required: ["matchedAssetIds"],
+    properties: {
+      reasoning: {
+        type: "string",
+        description:
+          "Briefly note which candidates you considered relevant and why, before deciding. For a how-to/process article with no process photography available, a representative product photo of the article's core subject is an acceptable illustration — say so explicitly if that's the case here.",
+      },
+      matchedAssetIds: { type: "array", items: { type: "string" } },
+    },
+    required: ["reasoning", "matchedAssetIds"],
   },
 };
 
@@ -102,7 +117,13 @@ literal string overlap with any tag. Only include a photo if a reader
 would recognize it as actually illustrating this article — an unrelated
 product from the same brand, or a photo that only loosely fits, is not
 a match. If nothing in the library is a reasonable fit, return an empty
-list; never force a mismatched pick.`;
+list; never force a mismatched pick.
+
+The library only has product/lifestyle photos, never step-by-step or
+process shots. For a how-to or installation-process article, don't hold
+out for photography that doesn't exist — a clear photo of the article's
+core subject (e.g. an insert product photo for an article about framing
+an insert) is a legitimate illustration on its own.`;
 
   const userContent = `Article title: ${article.title}
 ${article.coreSubject ? `Core subject: ${article.coreSubject}\n` : ""}${
@@ -119,7 +140,7 @@ Pick up to ${limit} best-fitting photo id(s), ordered best first.`;
     userContent,
     tool: SEMANTIC_MATCH_TOOL,
     schema: semanticMatchSchema,
-    maxTokens: 512,
+    maxTokens: 1024, // room for the reasoning field ahead of the id array, not just the array itself
   });
 
   const byId = new Map(candidates.map((c) => [c.id, c]));
