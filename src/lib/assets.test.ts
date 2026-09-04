@@ -52,3 +52,25 @@ test("rankAssetsByScore keeps stable order for equal scores", () => {
     ["a", "b", "c"],
   );
 });
+
+test("scoreAssetMatch ignores a blog category tag leaking onto an asset", () => {
+  // Reproduces the real production bug: an asset imported from a Shopify
+  // product picked up "Room & Space" (one of the blog's own category
+  // tags) alongside its real photo tags. Every article tagged "Room &
+  // Space" then "matched" this one unrelated asset by coincidence.
+  const score = scoreAssetMatch(["Amantii", "Three-Sided", "Room & Space"], ["Room & Space"]);
+  assert.equal(score, 0);
+});
+
+test("scoreAssetMatch still counts a real overlap alongside a blog category tag", () => {
+  const score = scoreAssetMatch(["Linear", "Installation"], ["Linear", "Installation"]);
+  assert.equal(score, 1);
+});
+
+test("rankAssetsByScore drops an asset whose only overlap is a blog category tag", () => {
+  const candidates = [
+    { id: "unrelated-but-tagged", tags: ["Amantii", "Three-Sided", "Room & Space"] },
+    { id: "no-overlap", tags: ["Wall-Mount"] },
+  ];
+  assert.deepEqual(rankAssetsByScore(candidates, ["Room & Space"]), []);
+});

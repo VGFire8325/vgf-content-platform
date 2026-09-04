@@ -5,12 +5,40 @@ import type { db as DbClient } from "@/db/client";
 import { assetLibrary } from "@/db/schema";
 import { BRAND_CORE, callStructuredTool } from "./anthropic";
 
+// The blog's entire content taxonomy (confirmed against production:
+// `SELECT DISTINCT unnest(tags) FROM articles` never returns anything
+// outside this set) — every article is tagged with one of these and
+// nothing else. Exact-tag matching assumes an asset tag shared with an
+// article is a deliberate, meaningful signal, but assets imported from
+// Shopify products can pick up the product's own category tags
+// alongside their real photo-specific ones (vendor, install style,
+// room). When one of *these* seven leaks onto an asset, that asset
+// "matches" every article in the category by coincidence, regardless of
+// whether the photo has anything to do with the article — and since it
+// wins before the semantic pass ever runs, the same photo gets reused
+// across genuinely unrelated topics. A category name never describes a
+// photo's content, so it carries no matching signal on the asset side.
+const BLOG_CATEGORY_TAGS = new Set(
+  [
+    "Brands",
+    "Comparisons",
+    "Getting Started",
+    "Installation",
+    "Ownership & Maintenance",
+    "Room & Space",
+    "Style & Decor",
+  ].map((t) => t.toLowerCase()),
+);
+
 // How well an approved image's tags match the article it'd be used for.
 // Case-insensitive intersection count — pure so it's cheap to unit test
 // without a database.
 export function scoreAssetMatch(assetTags: string[], articleTags: string[]): number {
   const normalizedArticleTags = new Set(articleTags.map((t) => t.toLowerCase()));
-  return assetTags.filter((t) => normalizedArticleTags.has(t.toLowerCase())).length;
+  return assetTags.filter((t) => {
+    const normalized = t.toLowerCase();
+    return !BLOG_CATEGORY_TAGS.has(normalized) && normalizedArticleTags.has(normalized);
+  }).length;
 }
 
 // Ranks candidates by scoreAssetMatch, best first, dropping anything
