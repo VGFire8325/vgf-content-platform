@@ -1,8 +1,8 @@
-import { desc } from "drizzle-orm";
+import { and, desc, gt, isNotNull } from "drizzle-orm";
 import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import type { db as DbClient } from "@/db/client";
-import { assetLibrary } from "@/db/schema";
+import { assetLibrary, contentAssets } from "@/db/schema";
 import { BRAND_CORE, callStructuredTool } from "./anthropic";
 
 // The blog's entire content taxonomy (confirmed against production:
@@ -132,29 +132,89 @@ Pick up to ${limit} best-fitting photo id(s), ordered best first.`;
   return matched;
 }
 
-// No match (including an empty library) returns null, and callers are
-// expected to surface that as "needs an approved photo" rather than
-// pick something unrelated. Exact tag overlap is tried first — free,
-// instant, and the right answer whenever an asset really was tagged to
-// match — before falling back to the semantic pass.
+// A public feed reader scrolling past two posts sharing a photo notices,
+// regardless of how good the topical match was on each — so recency is
+// checked before either matching pass runs, not after. Window is days
+// rather than "last N posts" so a slow week doesn't count as more
+// distinct usage than it was.
+const RECENT_ASSET_WINDOW_DAYS = 14;
+
+async function recentlyUsedAssetIds(db: typeof DbClient, windowDays: number): Promise<Set<string>> {
+  const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
+  const rows = await db
+    .select({ sourceAssetId: contentAssets.sourceAssetId })
+    .from(contentAssets)
+    .where(and(isNotNull(contentAssets.sourceAssetId), gt(contentAssets.createdAt, since)));
+  return new Set(rows.map((r) => r.sourceAssetId).filter((id): id is string => id !== null));
+}
+
+// Exact overlap, then the semantic pass, against a single candidate pool.
+async function bestMatches(
+  client: Anthropic,
+  article: ArticleMatchContext,
+  pool: AssetRow[],
+  limit: number,
+): Promise<AssetRow[]> {
+  if (pool.length === 0) return [];
+  const exact = rankAssetsByScore(pool, article.tags);
+  if (exact.length > 0) return exact.slice(0, limit);
+  return matchAssetsSemantic(client, article, pool, limit);
+}
+
+export function dedupeById<T extends { id: string }>(items: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const item of items) {
+    if (!seen.has(item.id)) {
+      seen.add(item.id);
+      out.push(item);
+    }
+  }
+  return out;
+}
+
+// Last-resort pick when neither matching pass finds even a loose fit.
+// `candidates` must be non-empty; prefers an asset not used in the
+// recent window, falling back to the newest asset on file otherwise —
+// pure so it's cheap to unit test against the recency rule directly.
+export function pickFallbackAsset<T extends { id: string }>(candidates: T[], recentlyUsed: Set<string>): T {
+  const fresh = candidates.find((c) => !recentlyUsed.has(c.id));
+  return fresh ?? candidates[0]!;
+}
+
+// Only an empty library returns null — every other case is guaranteed a
+// photo. A post going out with no image at all is worse than one with an
+// imperfect image, so "no confident match" falls back through
+// progressively looser pools (recently-used assets excluded, then
+// allowed back in, then just the newest asset on file) instead of
+// leaving the item at needs_asset. Exact tag overlap is tried first —
+// free, instant, and the right answer whenever an asset really was
+// tagged to match — before the semantic pass.
 export async function selectAssetForArticle(
   db: typeof DbClient,
   client: Anthropic,
   article: ArticleMatchContext,
 ): Promise<AssetRow | null> {
   const candidates = await db.select().from(assetLibrary).orderBy(desc(assetLibrary.uploadedAt));
-  const exact = rankAssetsByScore(candidates, article.tags)[0];
-  if (exact) return exact;
   if (candidates.length === 0) return null;
-  const [matched] = await matchAssetsSemantic(client, article, candidates, 1);
-  return matched ?? null;
+
+  const recentlyUsed = await recentlyUsedAssetIds(db, RECENT_ASSET_WINDOW_DAYS);
+  const fresh = candidates.filter((c) => !recentlyUsed.has(c.id));
+
+  const [freshMatch] = await bestMatches(client, article, fresh, 1);
+  if (freshMatch) return freshMatch;
+
+  const [anyMatch] = await bestMatches(client, article, candidates, 1);
+  if (anyMatch) return anyMatch;
+
+  return pickFallbackAsset(candidates, recentlyUsed);
 }
 
 // Returns up to `limit` distinct matches (best first) instead of one —
 // used by the Instagram carousel renderer so slides don't all reuse the
-// same single photo. Returns fewer than `limit` (down to []) when
-// neither pass finds that many; callers cycle through what's returned
-// rather than treating a short list as an error.
+// same single photo. Only an empty library returns fewer than `limit`
+// (down to []); callers cycle through what's returned rather than
+// treating a short list as an error.
 export async function selectAssetsForArticle(
   db: typeof DbClient,
   client: Anthropic,
@@ -162,8 +222,17 @@ export async function selectAssetsForArticle(
   limit: number,
 ): Promise<AssetRow[]> {
   const candidates = await db.select().from(assetLibrary).orderBy(desc(assetLibrary.uploadedAt));
-  const exact = rankAssetsByScore(candidates, article.tags);
-  if (exact.length > 0) return exact.slice(0, limit);
   if (candidates.length === 0) return [];
-  return matchAssetsSemantic(client, article, candidates, limit);
+
+  const recentlyUsed = await recentlyUsedAssetIds(db, RECENT_ASSET_WINDOW_DAYS);
+  const fresh = candidates.filter((c) => !recentlyUsed.has(c.id));
+
+  const freshMatches = await bestMatches(client, article, fresh, limit);
+  if (freshMatches.length >= limit) return freshMatches;
+
+  const anyMatches = await bestMatches(client, article, candidates, limit);
+  const merged = dedupeById([...freshMatches, ...anyMatches]).slice(0, limit);
+  if (merged.length > 0) return merged;
+
+  return [pickFallbackAsset(candidates, recentlyUsed)];
 }

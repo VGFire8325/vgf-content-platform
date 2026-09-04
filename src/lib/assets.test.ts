@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { rankAssetsByScore, scoreAssetMatch } from "./assets";
+import { dedupeById, pickFallbackAsset, rankAssetsByScore, scoreAssetMatch } from "./assets";
 
 test("scoreAssetMatch counts overlapping tags case-insensitively", () => {
   const score = scoreAssetMatch(["Linear", "living-room", "Install"], ["linear", "buying-guide"]);
@@ -73,4 +73,24 @@ test("rankAssetsByScore drops an asset whose only overlap is a blog category tag
     { id: "no-overlap", tags: ["Wall-Mount"] },
   ];
   assert.deepEqual(rankAssetsByScore(candidates, ["Room & Space"]), []);
+});
+
+test("dedupeById keeps first occurrence and drops later duplicates", () => {
+  const items = [{ id: "a" }, { id: "b" }, { id: "a" }, { id: "c" }, { id: "b" }];
+  assert.deepEqual(
+    dedupeById(items).map((i) => i.id),
+    ["a", "b", "c"],
+  );
+});
+
+test("pickFallbackAsset prefers an asset not used in the recent window", () => {
+  const candidates = [{ id: "recent" }, { id: "fresh" }, { id: "also-fresh" }];
+  const recentlyUsed = new Set(["recent"]);
+  assert.equal(pickFallbackAsset(candidates, recentlyUsed).id, "fresh");
+});
+
+test("pickFallbackAsset still returns something when every candidate was used recently", () => {
+  const candidates = [{ id: "a" }, { id: "b" }];
+  const recentlyUsed = new Set(["a", "b"]);
+  assert.equal(pickFallbackAsset(candidates, recentlyUsed).id, "a");
 });

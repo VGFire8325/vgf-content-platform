@@ -28,8 +28,8 @@ const REGENERABLE_FIELDS: Record<string, { key: string; label: string }[]> = {
 };
 
 function ImageSection({ item, asset }: { item: ContentItemRow; asset: ContentAssetRow | undefined }) {
-  if (item.contentType !== "pinterest_pin") {
-    return null; // only Pinterest has a template/compositor implemented so far
+  if (item.contentType !== "pinterest_pin" && item.contentType !== "linkedin_post") {
+    return null; // Instagram carousels render multiple images per item — not handled by this single-asset section yet
   }
 
   return (
@@ -39,14 +39,14 @@ function ImageSection({ item, asset }: { item: ContentItemRow; asset: ContentAss
         <img src={asset.fileUrl} alt="" className="pin-thumb" />
       ) : asset?.status === "needs_asset" ? (
         <div className="needs-asset">
-          No approved photo tags matched this article — upload/tag one in the Asset Library, then regenerate.
+          No approved photo in the library at all — upload one in the Asset Library, then regenerate.
         </div>
       ) : (
         <div className="needs-asset">Image queued for rendering.</div>
       )}
       <form action={regenerateImage}>
         <input type="hidden" name="id" value={item.id} />
-        <button type="submit">Regenerate image (next template)</button>
+        <button type="submit">{item.contentType === "pinterest_pin" ? "Regenerate image (next template)" : "Regenerate image"}</button>
       </form>
     </div>
   );

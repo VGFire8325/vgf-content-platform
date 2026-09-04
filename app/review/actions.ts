@@ -193,18 +193,25 @@ export async function regenerateField(formData: FormData) {
   revalidatePath(REVIEW_PATH);
 }
 
-// "Regenerate with a different template variant" — the one image
-// action the plan actually calls for in V1 (§1: no full template
-// editor). Cycles to the next fixed Pinterest layout and re-enqueues a
-// render_image job; the cron runner picks it up like any other job.
+// Pinterest cycles to the next fixed template layout (the one image
+// action the plan actually calls for in V1, §1: no full template
+// editor). LinkedIn has no template to cycle — it just re-runs asset
+// selection, which can land on a different photo now that matching
+// accounts for recent usage. Either way, re-enqueues a render_image job
+// for the cron runner to pick up like any other job.
 export async function regenerateImage(formData: FormData) {
   const id = requireString(formData, "id");
   const [item] = await db.select().from(contentItems).where(eq(contentItems.id, id)).limit(1);
   if (!item) {
     throw new Error(`content_item ${id} not found`);
   }
+  if (item.platform === "linkedin" && item.contentType === "linkedin_post") {
+    await enqueueJob(db, "render_image", { contentItemId: id });
+    revalidatePath(REVIEW_PATH);
+    return;
+  }
   if (item.platform !== "pinterest" || item.contentType !== "pinterest_pin") {
-    throw new Error("Image regeneration is only available for Pinterest pins right now.");
+    throw new Error("Image regeneration is only available for Pinterest pins and LinkedIn posts right now.");
   }
 
   const [latestAsset] = await db
