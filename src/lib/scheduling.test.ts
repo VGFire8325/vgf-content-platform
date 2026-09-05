@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PINTEREST_SCHEDULE_START_HOUR_UTC, pickCampaignDailySlot, pickFacebookSlot, pickLinkedInSlot, pickPinterestSlot } from "./scheduling";
+import { PINTEREST_SCHEDULE_START_HOUR_UTC, pickDailyCadenceSlot, pickFacebookSlot, pickPinterestSlot } from "./scheduling";
 
 test("pickPinterestSlot uses the start date when nothing is scheduled yet", () => {
   const start = new Date("2026-08-06T00:00:00Z");
@@ -49,38 +49,26 @@ test("pickFacebookSlot never lands in the past after a long gap", () => {
   assert.equal(slot.getTime(), now.getTime() + 60 * 60 * 1000);
 });
 
-// LinkedIn shares Facebook's weekly-cadence logic (see scheduling.ts) —
-// same behavior, a separate export so each platform's schedule is
-// tracked independently.
-test("pickLinkedInSlot schedules ~1 hour out when nothing has posted yet", () => {
-  const now = new Date("2026-08-06T12:00:00Z");
-  const slot = pickLinkedInSlot(null, now);
-  assert.equal(slot.getTime(), now.getTime() + 60 * 60 * 1000);
-});
-
-test("pickLinkedInSlot schedules 7 days after the last post", () => {
-  const last = new Date("2026-08-01T12:00:00Z");
-  const now = new Date("2026-08-02T00:00:00Z");
-  const slot = pickLinkedInSlot(last, now);
-  assert.equal(slot.toISOString(), "2026-08-08T12:00:00.000Z");
-});
-
-test("pickCampaignDailySlot schedules tomorrow when nothing in the campaign has posted yet", () => {
+// LinkedIn's normal (non-campaign) pipeline and each one-off campaign
+// share this same daily-cadence logic (see scheduling.ts), each scoped
+// to its own set of posts so they never push each other's schedule
+// around.
+test("pickDailyCadenceSlot schedules tomorrow when nothing has posted yet", () => {
   const now = new Date("2026-09-01T12:00:00Z");
-  const slot = pickCampaignDailySlot(null, now);
+  const slot = pickDailyCadenceSlot(null, now);
   assert.equal(slot.toISOString(), "2026-09-02T12:00:00.000Z");
 });
 
-test("pickCampaignDailySlot schedules 1 day after the campaign's last post", () => {
+test("pickDailyCadenceSlot schedules 1 day after the last post", () => {
   const last = new Date("2026-09-02T12:00:00Z");
   const now = new Date("2026-09-02T18:00:00Z");
-  const slot = pickCampaignDailySlot(last, now);
+  const slot = pickDailyCadenceSlot(last, now);
   assert.equal(slot.toISOString(), "2026-09-03T12:00:00.000Z");
 });
 
-test("pickCampaignDailySlot never lands in the past after a long gap", () => {
+test("pickDailyCadenceSlot never lands in the past after a long gap", () => {
   const last = new Date("2026-08-01T12:00:00Z");
   const now = new Date("2026-09-01T00:00:00Z");
-  const slot = pickCampaignDailySlot(last, now);
+  const slot = pickDailyCadenceSlot(last, now);
   assert.ok(slot.getTime() > now.getTime());
 });

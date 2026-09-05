@@ -152,9 +152,9 @@ export const contentItems = pgTable("content_items", {
   status: contentItemStatusEnum("status").notNull().default("draft"),
   // Null = the normal ongoing pipeline. Set for a one-off content
   // campaign (e.g. the evergreen-backlog "blitz") so it can run its own
-  // independent posting cadence — see nextLinkedInCampaignSlot in
-  // src/lib/scheduling.ts — without distorting the normal weekly slot
-  // math for new-article approvals happening at the same time.
+  // independent posting cadence — see nextLinkedInDailySlot in
+  // src/lib/scheduling.ts — without distorting the normal pipeline's
+  // slot math for new-article approvals happening at the same time.
   campaign: text("campaign"),
   // Audit counter, NOT a re-review gate. Edits update this row in place
   // and increment version; they do not create a new row. See

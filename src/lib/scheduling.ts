@@ -52,12 +52,10 @@ export async function nextPinterestSlot(db: typeof DbClient): Promise<Date> {
   return pickPinterestSlot(countsByDate, tomorrow);
 }
 
-// Shared "roughly weekly, boring by design" cadence — Facebook per the
-// brief's light-touch scope, LinkedIn as a reasonable default company-
-// page posting frequency (no brief guidance either way; easy to change
-// here if that's wrong). Pure: next slot is 7 days after the last
-// scheduled post, or ~1 hour from now if there isn't one yet; never
-// lands in the past if there's been a long gap since the last post.
+// Facebook's "roughly weekly, boring by design" cadence per the brief's
+// light-touch scope. Pure: next slot is 7 days after the last scheduled
+// post, or ~1 hour from now if there isn't one yet; never lands in the
+// past if there's been a long gap since the last post.
 function pickWeeklySlot(lastScheduledAt: Date | null, now: Date): Date {
   if (!lastScheduledAt) {
     return new Date(now.getTime() + 60 * 60 * 1000);
@@ -67,11 +65,10 @@ function pickWeeklySlot(lastScheduledAt: Date | null, now: Date): Date {
 }
 
 // Excludes campaign-tagged content items (isNull(contentItems.campaign))
-// so a one-off campaign's own dense schedule (see
-// nextLinkedInCampaignSlot below) never counts as "the latest post" for
-// the normal weekly cadence — the two are meant to run as independent
-// streams, not push each other around.
-async function nextWeeklySlot(db: typeof DbClient, platform: "facebook" | "linkedin"): Promise<Date> {
+// so a one-off campaign's own dense schedule never counts as "the latest
+// post" for Facebook's weekly cadence — the two are meant to run as
+// independent streams, not push each other around.
+async function nextWeeklySlot(db: typeof DbClient, platform: "facebook"): Promise<Date> {
   const [latest] = await db
     .select({ scheduledAt: publishTargets.scheduledAt })
     .from(publishTargets)
@@ -97,21 +94,16 @@ export function nextFacebookSlot(db: typeof DbClient): Promise<Date> {
   return nextWeeklySlot(db, "facebook");
 }
 
-export function pickLinkedInSlot(lastScheduledAt: Date | null, now: Date): Date {
-  return pickWeeklySlot(lastScheduledAt, now);
-}
-
-export function nextLinkedInSlot(db: typeof DbClient): Promise<Date> {
-  return nextWeeklySlot(db, "linkedin");
-}
-
-// One-off campaign cadence (the evergreen-content "blitz" being the
-// first use): daily instead of weekly, scoped to posts tagged with the
-// given campaign so it can run at its own pace without touching — or
-// being touched by — the normal weekly cadence above. First slot is
-// tomorrow (not "~1 hour from now" like the weekly cadence), since a
-// same-day post isn't the point of a paced daily backlog release.
-export function pickCampaignDailySlot(lastScheduledAt: Date | null, now: Date): Date {
+// LinkedIn posts the day after approval instead of on a weekly timer —
+// at roughly 2 articles/week, that naturally lands around 2 LinkedIn
+// posts/week without hardcoding which days. Also the one-off campaign
+// cadence (the evergreen-content "blitz" being the first use), scoped
+// by `campaign` so a campaign's dense schedule never counts as "the
+// latest post" for the normal (campaign: null) pipeline and vice versa —
+// the streams run independently, not pushing each other around. First
+// slot is tomorrow (not "~1 hour from now" like Facebook's weekly
+// cadence), since a same-day post isn't the point of either cadence.
+export function pickDailyCadenceSlot(lastScheduledAt: Date | null, now: Date): Date {
   if (!lastScheduledAt) {
     const tomorrow = new Date(now);
     tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
@@ -121,7 +113,7 @@ export function pickCampaignDailySlot(lastScheduledAt: Date | null, now: Date): 
   return dayLater.getTime() < now.getTime() ? new Date(now.getTime() + 60 * 60 * 1000) : dayLater;
 }
 
-export async function nextLinkedInCampaignSlot(db: typeof DbClient, campaign: string): Promise<Date> {
+export async function nextLinkedInDailySlot(db: typeof DbClient, campaign: string | null): Promise<Date> {
   const [latest] = await db
     .select({ scheduledAt: publishTargets.scheduledAt })
     .from(publishTargets)
@@ -130,11 +122,15 @@ export async function nextLinkedInCampaignSlot(db: typeof DbClient, campaign: st
     .where(
       and(
         eq(platformConnections.platform, "linkedin"),
-        eq(contentItems.campaign, campaign),
+        campaign ? eq(contentItems.campaign, campaign) : isNull(contentItems.campaign),
         inArray(publishTargets.status, ["scheduled", "publishing", "published"]),
       ),
     )
     .orderBy(desc(publishTargets.scheduledAt))
     .limit(1);
-  return pickCampaignDailySlot(latest?.scheduledAt ?? null, new Date());
+  return pickDailyCadenceSlot(latest?.scheduledAt ?? null, new Date());
+}
+
+export function nextLinkedInSlot(db: typeof DbClient): Promise<Date> {
+  return nextLinkedInDailySlot(db, null);
 }
