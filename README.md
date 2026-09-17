@@ -11,9 +11,15 @@ Full architecture, schema rationale, retry/cost/security decisions:
 
 Phase 1, milestones 1–8 done — Pinterest, Facebook, Instagram, and (as
 of this milestone) LinkedIn are all publish-capable end to end. Meta
-(Facebook + Instagram) is currently paused by choice, not broken —
-Pinterest and LinkedIn are the active focus; Meta picks back up
-whenever that's revisited, no code changes needed to resume it.
+(Facebook + Instagram) is currently paused by choice, not broken — no
+code changes needed to resume it whenever that's revisited. Pinterest
+generation is also paused (2026-09-17): it's on Trial API access, which
+403s every real pin-creation call, so generated pins were piling up in
+Review unpublishable. LinkedIn is the sole active focus until Pinterest
+gets Standard/production access. Both pauses are the single
+`GENERATION_ENABLED_PLATFORMS` array in `runExtractArticle`
+(`app/api/cron/run-jobs/route.ts`) — add a platform back to resume it,
+no other code path gates generation.
 
 1. Schema in place (all 11 tables from the plan plus `shopify_connection`, migrations generated and verified).
 2. Shopify ingestion + extraction pipeline: a daily poll (`/api/cron/poll-shopify-articles`, `src/lib/platforms/shopify-articles.ts`) rather than a webhook — Shopify has no webhook topic for blog articles on any API surface, see below — with the same content-hash dedup, job queue (`jobs` table with `SKIP LOCKED` claiming), a Vercel Cron runner (`/api/cron/run-jobs`) implementing the §5 retry/backoff policy, and the `extract_article` job (Claude call → structured extraction → `article_extractions`). Shopify's own connection (`/api/oauth/shopify/*`) uses the OAuth authorization code grant, not a static token — Shopify stopped issuing those for Dev Dashboard apps on Jan 1, 2026.
