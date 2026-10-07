@@ -31,6 +31,16 @@ export const runtime = "nodejs";
 
 class NonRetryableJobError extends Error {}
 
+// A content item's suggestedBoard matching this exact name (case-
+// sensitive, deliberately not fuzzy) is the one signal that tells the
+// Pinterest publish step to create/use that board as SECRET instead of
+// Pinterest's PUBLIC default — used for the one-off pipeline test ahead
+// of the first real post on Standard API access (2026-10). Set a
+// content item's suggestedBoard to this exact string (e.g. via the
+// Review Queue's inline copy edit) to route a test pin here instead of
+// a real category board.
+const PINTEREST_TEST_BOARD_NAME = "VGF Pinterest Test (Secret)";
+
 type Job = typeof jobs.$inferSelect;
 type Platform = (typeof platformEnum.enumValues)[number];
 
@@ -483,7 +493,8 @@ async function runPublishPost(job: Job) {
         throw new Error("No rendered image for this pin yet — publish ran before render_image finished");
       }
       const copy = item.copyFields as { title: string; description: string; suggestedBoard: string };
-      const boardId = await findOrCreateBoard(accessToken, copy.suggestedBoard);
+      const boardPrivacy = copy.suggestedBoard === PINTEREST_TEST_BOARD_NAME ? "SECRET" : undefined;
+      const boardId = await findOrCreateBoard(accessToken, copy.suggestedBoard, boardPrivacy);
       const pinLink = withPinterestUtm(link, item.id);
       return createPin(accessToken, { title: copy.title, description: copy.description, link: pinLink, boardId, imageUrl: asset.fileUrl });
     }

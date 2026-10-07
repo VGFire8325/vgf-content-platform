@@ -103,8 +103,14 @@ interface PinterestBoard {
 // generation prompt, e.g. "Electric Fireplace Ideas") to a real board
 // ID, creating the board on first use. Case-insensitive exact match —
 // deliberately not fuzzy, so a near-miss creates a new board rather
-// than silently posting to the wrong one.
-export async function findOrCreateBoard(accessToken: string, boardName: string): Promise<string> {
+// than silently posting to the wrong one. `privacy` only applies to
+// creation (Pinterest defaults a new board to PUBLIC if omitted); an
+// already-existing board's privacy is never changed here.
+export async function findOrCreateBoard(
+  accessToken: string,
+  boardName: string,
+  privacy?: "PUBLIC" | "SECRET",
+): Promise<string> {
   const { items } = await pinterestApiRequest<{ items: PinterestBoard[] }>(accessToken, "/boards?page_size=100");
   const existing = items.find((b) => b.name.toLowerCase() === boardName.toLowerCase());
   if (existing) {
@@ -112,7 +118,7 @@ export async function findOrCreateBoard(accessToken: string, boardName: string):
   }
   const created = await pinterestApiRequest<PinterestBoard>(accessToken, "/boards", {
     method: "POST",
-    body: JSON.stringify({ name: boardName }),
+    body: JSON.stringify({ name: boardName, ...(privacy ? { privacy } : {}) }),
   });
   return created.id;
 }
