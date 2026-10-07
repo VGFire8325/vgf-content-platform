@@ -24,6 +24,16 @@ test("Pinterest 500 classifies as a plain (retryable) error", () => {
   assert.ok(!(err instanceof PlatformValidationError));
 });
 
+test("Pinterest error with context prefixes the message with the failing call", () => {
+  const err = classifyPinterestError(403, { code: 29, message: "You are not permitted to access that resource." }, "POST /boards");
+  assert.equal(err.message, "POST /boards: You are not permitted to access that resource. [pinterest code 29]");
+});
+
+test("Pinterest error without context stays exactly as before (no code, no prefix)", () => {
+  const err = classifyPinterestError(403, { code: 29, message: "You are not permitted to access that resource." });
+  assert.equal(err.message, "You are not permitted to access that resource.");
+});
+
 test("Meta invalid-token error (HTTP 400, OAuthException) classifies as auth, not validation", () => {
   // This is the documented Graph API quirk: token errors come back as
   // HTTP 400, not 401 — status code alone would misclassify this as a

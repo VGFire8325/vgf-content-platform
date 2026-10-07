@@ -55,7 +55,7 @@ async function tokenRequest(clientId: string, clientSecret: string, body: URLSea
   });
   const json = await response.json();
   if (!response.ok) {
-    throw classifyPinterestError(response.status, json);
+    throw classifyPinterestError(response.status, json, "POST /oauth/token");
   }
   return json as PinterestTokenResponse;
 }
@@ -87,7 +87,7 @@ async function pinterestApiRequest<T>(accessToken: string, path: string, init?: 
   });
   const json = await response.json().catch(() => null);
   if (!response.ok) {
-    throw classifyPinterestError(response.status, json);
+    throw classifyPinterestError(response.status, json, `${init?.method ?? "GET"} ${path}`);
   }
   return json as T;
 }

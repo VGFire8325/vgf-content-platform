@@ -12,8 +12,22 @@
 export class PlatformAuthError extends Error {}
 export class PlatformValidationError extends Error {}
 
-export function classifyPinterestError(status: number, body: unknown): Error {
-  const message = extractMessage(body) ?? `Pinterest API error (HTTP ${status})`;
+// `context` (method + path, e.g. "POST /boards") is optional and purely
+// cosmetic — added so a stored job/publish-target error actually says
+// which call failed instead of just Pinterest's generic message (the
+// real gap hit diagnosing the first live pin attempt on Standard
+// access: "You are not permitted to access that resource" alone didn't
+// say whether that was listing boards, creating one, or creating the
+// pin). Omit it and behavior is identical to before.
+export function classifyPinterestError(status: number, body: unknown, context?: string): Error {
+  const base = extractMessage(body) ?? `Pinterest API error (HTTP ${status})`;
+  // Pinterest's own numeric error code (e.g. 29 = "not permitted") is
+  // only surfaced alongside `context` — bare classifyPinterestError
+  // calls (unit tests, any caller not passing context) keep the exact
+  // message text they always have.
+  const code = context ? extractCode(body) : undefined;
+  const withCode = code !== undefined ? `${base} [pinterest code ${code}]` : base;
+  const message = context ? `${context}: ${withCode}` : base;
   if (status === 401 || status === 403) {
     return new PlatformAuthError(message);
   }
@@ -63,6 +77,13 @@ export function classifyLinkedInError(status: number, body: unknown): Error {
 function extractMessage(body: unknown): string | undefined {
   if (body && typeof body === "object" && "message" in body && typeof (body as { message: unknown }).message === "string") {
     return (body as { message: string }).message;
+  }
+  return undefined;
+}
+
+function extractCode(body: unknown): number | undefined {
+  if (body && typeof body === "object" && "code" in body && typeof (body as { code: unknown }).code === "number") {
+    return (body as { code: number }).code;
   }
   return undefined;
 }
