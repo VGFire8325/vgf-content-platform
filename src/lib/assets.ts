@@ -194,11 +194,74 @@ export function dedupeById<T extends { id: string }>(items: T[]): T[] {
   return out;
 }
 
+// Cheap, free-text relevance signal for the last-resort fallback below —
+// deliberately not another model call, since this only runs after the
+// semantic pass has already looked and found nothing. It only needs to
+// beat "pick something blind," not find a good match on its own: a
+// real production case had all 7 "Electric Fireplace Insert"-tagged
+// photos excluded as recently-used, and the semantic pass came up empty
+// against what was left (the generated imageConcept asked for a
+// wood-burning side the library has no photos of at all, since this is
+// an electric-fireplace retailer) — so the old fallback handed a
+// completely unrelated "Electric Fireplace Accessory" trim-kit photo to
+// an article about choosing between insert types. Word overlap between
+// the article's own text and an asset's tags/notes would have caught
+// "insert" on both sides.
+function tokenize(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((w) => w.length > 3), // skip tiny/common words that would match almost anything
+  );
+}
+
+function articleWords(article: ArticleMatchContext): Set<string> {
+  return tokenize([article.title, article.coreSubject, ...(article.keyTakeaways ?? [])].filter(Boolean).join(" "));
+}
+
+// Prefix match either direction, not exact-equality — plain tokenizing
+// would otherwise miss "inserts" (article) against "insert" (asset tag)
+// over a plural/singular difference alone.
+function wordOverlapScore(assetText: string, articleWordSet: Set<string>): number {
+  const assetWords = tokenize(assetText);
+  let score = 0;
+  for (const articleWord of articleWordSet) {
+    for (const assetWord of assetWords) {
+      if (articleWord.startsWith(assetWord) || assetWord.startsWith(articleWord)) {
+        score++;
+        break;
+      }
+    }
+  }
+  return score;
+}
+
 // Last-resort pick when neither matching pass finds even a loose fit.
-// `candidates` must be non-empty; prefers an asset not used in the
-// recent window, falling back to the newest asset on file otherwise —
-// pure so it's cheap to unit test against the recency rule directly.
-export function pickFallbackAsset<T extends { id: string }>(candidates: T[], recentlyUsed: Set<string>): T {
+// `candidates` must be non-empty. With `article` given, first prefers
+// the candidate with the best tag/notes word-overlap against the
+// article's own text — ties broken toward not-recently-used — and only
+// drops to pure recency (prefers an asset not used in the recent
+// window, falling back to the newest asset on file otherwise) when
+// nothing overlaps at all. Pure so it's cheap to unit test against the
+// recency and relevance rules directly.
+export function pickFallbackAsset<T extends { id: string; tags?: string[]; notes?: string | null }>(
+  candidates: T[],
+  recentlyUsed: Set<string>,
+  article?: ArticleMatchContext,
+): T {
+  if (article) {
+    const words = articleWords(article);
+    const scored = candidates
+      .map((c) => ({ c, score: wordOverlapScore([...(c.tags ?? []), c.notes ?? ""].join(" "), words) }))
+      .filter(({ score }) => score > 0)
+      .sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return Number(recentlyUsed.has(a.c.id)) - Number(recentlyUsed.has(b.c.id));
+      });
+    if (scored.length > 0) return scored[0]!.c;
+  }
+
   const fresh = candidates.find((c) => !recentlyUsed.has(c.id));
   return fresh ?? candidates[0]!;
 }
@@ -228,7 +291,7 @@ export async function selectAssetForArticle(
   const [anyMatch] = await bestMatches(client, article, candidates, 1);
   if (anyMatch) return anyMatch;
 
-  return pickFallbackAsset(candidates, recentlyUsed);
+  return pickFallbackAsset(candidates, recentlyUsed, article);
 }
 
 // Returns up to `limit` distinct matches (best first) instead of one —
@@ -255,5 +318,5 @@ export async function selectAssetsForArticle(
   const merged = dedupeById([...freshMatches, ...anyMatches]).slice(0, limit);
   if (merged.length > 0) return merged;
 
-  return [pickFallbackAsset(candidates, recentlyUsed)];
+  return [pickFallbackAsset(candidates, recentlyUsed, article)];
 }

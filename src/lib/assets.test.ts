@@ -94,3 +94,34 @@ test("pickFallbackAsset still returns something when every candidate was used re
   const recentlyUsed = new Set(["a", "b"]);
   assert.equal(pickFallbackAsset(candidates, recentlyUsed).id, "a");
 });
+
+test("pickFallbackAsset prefers word overlap with the article over blind recency", () => {
+  // Reproduces the real production case: every topically relevant asset
+  // was within the recency window, so the old pure-recency fallback
+  // handed an unrelated accessory photo to an "Electric Fireplace
+  // Insert" article instead.
+  const candidates = [
+    { id: "trim-kit", tags: ["Amantii", "Electric Fireplace Accessory"], notes: "Trim Kit" },
+    { id: "insert-photo", tags: ["Remii", "Electric Fireplace Insert"], notes: "Heritage Classic installed" },
+  ];
+  const recentlyUsed = new Set(["insert-photo"]); // the relevant one is "used up"
+  const article = { title: "Electric vs Wood-Burning Fireplace Inserts", tags: [] };
+  assert.equal(pickFallbackAsset(candidates, recentlyUsed, article).id, "insert-photo");
+});
+
+test("pickFallbackAsset falls back to pure recency when nothing overlaps the article at all", () => {
+  const candidates = [{ id: "a", tags: ["Outdoor"], notes: null }, { id: "b", tags: ["Wall-Mount"], notes: null }];
+  const recentlyUsed = new Set(["a"]);
+  const article = { title: "Choosing a Mantel Style", tags: [] };
+  assert.equal(pickFallbackAsset(candidates, recentlyUsed, article).id, "b");
+});
+
+test("pickFallbackAsset breaks a relevance tie toward the not-recently-used candidate", () => {
+  const candidates = [
+    { id: "used", tags: ["Electric Fireplace Insert"], notes: null },
+    { id: "fresh", tags: ["Electric Fireplace Insert"], notes: null },
+  ];
+  const recentlyUsed = new Set(["used"]);
+  const article = { title: "Electric Fireplace Insert Buying Guide", tags: [] };
+  assert.equal(pickFallbackAsset(candidates, recentlyUsed, article).id, "fresh");
+});
