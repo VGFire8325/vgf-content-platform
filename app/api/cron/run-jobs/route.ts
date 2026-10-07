@@ -85,20 +85,16 @@ async function runExtractArticle(job: Job) {
   // while LinkedIn/Pinterest cadence and quality get sorted out first —
   // existing Facebook/Instagram content already in the pipeline is
   // untouched, this only stops new articles from generating more of it.
-  // Pinterest joined the pause list too (2026-09-17): it's on Trial API
-  // access, which hard-403s every real pin-creation call (see
-  // src/lib/platforms/pinterest.ts), so every Pinterest pin generated
-  // since then has been unpublishable dead weight in the Review Queue —
-  // the whole in_review backlog was cleared out for the same reason.
-  // THE TOGGLE: flip GENERATION_ENABLED_PLATFORMS back to
-  // ["pinterest", "linkedin"] (or all four) the moment Pinterest
-  // Standard/production API access is approved — that's the only change
-  // needed to resume Pinterest generation; nothing else in this file
-  // gates it. A campaign's own `platforms` override (e.g. the blitz's
-  // LinkedIn-only scope) takes precedence over this default either way,
-  // so the evergreen-article blitz is unaffected by this flag in either
-  // direction.
-  const GENERATION_ENABLED_PLATFORMS: Platform[] = ["linkedin"];
+  // Pinterest resumed 2026-10-07: Standard API access is live, a real
+  // pin publishes successfully (src/lib/platforms/pinterest.ts), and the
+  // one-pin-per-article / UTM / installed-in-setting rules are enforced
+  // in generation.ts and the publish path. THE TOGGLE: set this back to
+  // ["linkedin"] (removing "pinterest") if Pinterest needs pausing again
+  // — nothing else in this file gates it. A campaign's own `platforms`
+  // override (e.g. the blitz's LinkedIn-only scope) takes precedence
+  // over this default either way, so the evergreen-article blitz is
+  // unaffected by this flag in either direction.
+  const GENERATION_ENABLED_PLATFORMS: Platform[] = ["linkedin", "pinterest"];
   for (const platform of platforms ?? GENERATION_ENABLED_PLATFORMS) {
     await enqueueJob(db, "generate_content", { articleId: article.id, extractionId: inserted.id, platform, campaign });
   }
