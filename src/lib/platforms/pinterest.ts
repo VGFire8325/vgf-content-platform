@@ -104,15 +104,6 @@ interface PinterestBoard {
 // ID, creating the board on first use. Case-insensitive exact match —
 // deliberately not fuzzy, so a near-miss creates a new board rather
 // than silently posting to the wrong one.
-// Read-only board listing — used by the admin board-mapping check
-// (app/api/admin/pinterest-boards/route.ts) so real boards can be
-// reviewed before anything gets created. Unlike findOrCreateBoard this
-// never calls the write path.
-export async function listBoards(accessToken: string): Promise<PinterestBoard[]> {
-  const { items } = await pinterestApiRequest<{ items: PinterestBoard[] }>(accessToken, "/boards?page_size=100");
-  return items;
-}
-
 export async function findOrCreateBoard(accessToken: string, boardName: string): Promise<string> {
   const { items } = await pinterestApiRequest<{ items: PinterestBoard[] }>(accessToken, "/boards?page_size=100");
   const existing = items.find((b) => b.name.toLowerCase() === boardName.toLowerCase());
