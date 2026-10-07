@@ -17,8 +17,8 @@ test("every platform maps to exactly one content type", () => {
   });
 });
 
-test("pinterest generates multiple pins, other platforms generate one post", () => {
-  assert.equal(POSTS_PER_PLATFORM.pinterest, 3);
+test("every platform generates exactly one post per article", () => {
+  assert.equal(POSTS_PER_PLATFORM.pinterest, 1);
   assert.equal(POSTS_PER_PLATFORM.linkedin, 1);
   assert.equal(POSTS_PER_PLATFORM.facebook, 1);
   assert.equal(POSTS_PER_PLATFORM.instagram, 1);
@@ -29,9 +29,9 @@ test("capPostsToPlatformLimit truncates linkedin to 1 even if the model returns 
   assert.deepEqual(capPostsToPlatformLimit("linkedin", posts), [posts[0]]);
 });
 
-test("capPostsToPlatformLimit leaves pinterest's 3 concepts alone", () => {
+test("capPostsToPlatformLimit truncates pinterest to 1 even if the model returns more", () => {
   const posts = [{ title: "1" }, { title: "2" }, { title: "3" }];
-  assert.deepEqual(capPostsToPlatformLimit("pinterest", posts), posts);
+  assert.deepEqual(capPostsToPlatformLimit("pinterest", posts), [posts[0]]);
 });
 
 test("capPostsToPlatformLimit doesn't pad a short result up to the limit", () => {

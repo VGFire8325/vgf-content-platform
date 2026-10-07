@@ -30,6 +30,10 @@ const envSchema = z.object({
   META_APP_SECRET: z.string().min(1),
   LINKEDIN_CLIENT_ID: z.string().min(1),
   LINKEDIN_CLIENT_SECRET: z.string().min(1),
+  // Gates the temporary read-only /api/admin/pinterest-boards diagnostic
+  // (2026-10 Pinterest Standard-access cutover) — safe to remove along
+  // with that route once the board-mapping work is done.
+  ADMIN_DIAGNOSTIC_SECRET: z.string().min(1),
 });
 
 type Env = z.infer<typeof envSchema>;

@@ -14,11 +14,13 @@ export const CONTENT_TYPE_BY_PLATFORM: Record<Platform, ContentType> = {
 };
 
 // How many distinct posts to generate per platform per article. Pinterest
-// is explicitly "multiple pin concepts" per the brief; the others are
-// one post per article per the brief's "light touch" scope for
-// Facebook/Instagram and single reframed post for LinkedIn.
+// was originally "multiple pin concepts" per the brief, but Brendan's
+// explicit rule once Standard API access went live (2026-10-06) is one
+// pin per article — the others are one post per article per the brief's
+// "light touch" scope for Facebook/Instagram and single reframed post
+// for LinkedIn.
 export const POSTS_PER_PLATFORM: Record<Platform, number> = {
-  pinterest: 3,
+  pinterest: 1,
   linkedin: 1,
   facebook: 1,
   instagram: 1,
@@ -64,15 +66,16 @@ function postsArraySchema(platform: Platform) {
 }
 
 const PLATFORM_INSTRUCTIONS: Record<Platform, string> = {
-  pinterest: `Generate ${POSTS_PER_PLATFORM.pinterest} distinct Pinterest pin concepts for this
-article. Each needs: a title (Pinterest-style, benefit- or
-question-driven, under 100 characters), a search-oriented description
-written the way someone would actually search Pinterest, a suggested
-board name, and an imageConcept describing what the pin graphic should
-show — favor approved product/lifestyle photography over an AI-rendered
-product visual. The three concepts should take genuinely different
-angles on the article (e.g. different takeaways or different audience
-questions), not three rewordings of the same pin.`,
+  pinterest: `Generate exactly one Pinterest pin concept for this article: a
+title (Pinterest-style, benefit- or question-driven, under 100
+characters), a search-oriented description written the way someone
+would actually search Pinterest, a suggested board name, and an
+imageConcept describing what the pin graphic should show. The photo
+must show the product installed in a real room or setting — never an
+isolated studio/white-background product shot and never an AI-rendered
+visual. If you can't describe a plausible installed-in-setting shot for
+this article, say so in the imageConcept rather than defaulting to a
+plain product photo.`,
   linkedin: `Reframe this article for a professional audience: builders,
 contractors, remodelers, architects, designers, property managers. Do
 not summarize or copy the consumer article's intro — take a

@@ -13,7 +13,7 @@ import {
 } from "@/db/schema";
 import type Anthropic from "@anthropic-ai/sdk";
 import { createAnthropicClient, extractArticle } from "@/lib/anthropic";
-import { articlePublicUrl } from "@/lib/article-url";
+import { articlePublicUrl, withPinterestUtm } from "@/lib/article-url";
 import { requireEnv } from "@/lib/env";
 import { CONTENT_TYPE_BY_PLATFORM, generatePlatformContent, groundPosts } from "@/lib/generation";
 import { claimDueJobs, enqueueJob, markJobFailed, markJobSucceeded } from "@/lib/jobs";
@@ -484,7 +484,8 @@ async function runPublishPost(job: Job) {
       }
       const copy = item.copyFields as { title: string; description: string; suggestedBoard: string };
       const boardId = await findOrCreateBoard(accessToken, copy.suggestedBoard);
-      return createPin(accessToken, { title: copy.title, description: copy.description, link, boardId, imageUrl: asset.fileUrl });
+      const pinLink = withPinterestUtm(link, item.id);
+      return createPin(accessToken, { title: copy.title, description: copy.description, link: pinLink, boardId, imageUrl: asset.fileUrl });
     }
     if (item.platform === "facebook") {
       const copy = item.copyFields as { postText: string };
