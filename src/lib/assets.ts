@@ -207,7 +207,7 @@ export function dedupeById<T extends { id: string }>(items: T[]): T[] {
 // an article about choosing between insert types. Word overlap between
 // the article's own text and an asset's tags/notes would have caught
 // "insert" on both sides.
-function tokenize(text: string): Set<string> {
+export function tokenize(text: string): Set<string> {
   return new Set(
     text
       .toLowerCase()

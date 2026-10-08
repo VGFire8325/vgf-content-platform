@@ -1,9 +1,10 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne } from "drizzle-orm";
 import { db } from "@/db/client";
 import {
   articleExtractions,
   articles,
   contentAssets,
+  contentItemStatusEnum,
   contentItems,
   jobs,
   platformConnections,
@@ -13,16 +14,25 @@ import {
 } from "@/db/schema";
 import type Anthropic from "@anthropic-ai/sdk";
 import { createAnthropicClient, extractArticle } from "@/lib/anthropic";
-import { articlePublicUrl, withPinterestUtm } from "@/lib/article-url";
-import { requireEnv } from "@/lib/env";
-import { CONTENT_TYPE_BY_PLATFORM, generatePlatformContent, groundPosts } from "@/lib/generation";
+import { articlePublicUrl, withLinkedInUtm, withPinterestUtm } from "@/lib/article-url";
+import { composeLinkedInPost } from "@/lib/linkedin-post";
+import { optionalEnvBool, optionalEnvInt, requireEnv } from "@/lib/env";
+import { CONTENT_TYPE_BY_PLATFORM, generatePlatformContent, groundPosts, type LinkedinPost } from "@/lib/generation";
 import { claimDueJobs, enqueueJob, markJobFailed, markJobSucceeded } from "@/lib/jobs";
+import { evaluatePinterestPinQuality } from "@/lib/pinterest-quality";
 import { PlatformAuthError, PlatformValidationError } from "@/lib/platforms/errors";
 import { createOrganizationPost, refreshLinkedInToken, uploadLinkedInImage } from "@/lib/platforms/linkedin";
 import { createInstagramCarousel, createPagePost, refreshMetaUserToken } from "@/lib/platforms/meta";
 import { createPin, findOrCreateBoard, refreshPinterestToken } from "@/lib/platforms/pinterest";
 import { selectAssetForArticle, selectAssetsForArticle, type ArticleMatchContext } from "@/lib/assets";
+import {
+  DEFAULT_LINKEDIN_REPOST_GAP_DAYS,
+  checkRepostDistinctness,
+  extractOpeningLine,
+  isWithinLinkedInRepostGap,
+} from "@/lib/repost-policy";
 import { renderInstagramSlide, renderPinterestPin, resolveImageSrc } from "@/lib/render";
+import { inferAudienceTag, inferTopicTag, platformFitForArticle } from "@/lib/tagging";
 import type { PinterestTemplateId } from "@/lib/templates/pinterest";
 import { uploadRenderedImage } from "@/lib/storage";
 import { readSecret, updateSecret } from "@/lib/vault";
@@ -43,6 +53,7 @@ const PINTEREST_TEST_BOARD_NAME = "VGF Pinterest Test (Secret)";
 
 type Job = typeof jobs.$inferSelect;
 type Platform = (typeof platformEnum.enumValues)[number];
+type ContentItemStatus = (typeof contentItemStatusEnum.enumValues)[number];
 
 async function runExtractArticle(job: Job) {
   // campaign/platforms are optional overrides for a one-off content
@@ -100,12 +111,36 @@ async function runExtractArticle(job: Job) {
   }
 }
 
+// content_items with these statuses count as "posted or queued" for the
+// no-repeat check — a rejected item doesn't (a human already said no to
+// it, so it shouldn't block a fresh attempt), everything else that ever
+// reached Review for this article/platform does, published or not.
+const REPOST_HISTORY_STATUSES: ContentItemStatus[] = ["in_review", "approved", "scheduled", "published", "failed"];
+
+async function mostRecentLinkedInPost(articleId: string, campaign: string | null) {
+  const [row] = await db
+    .select()
+    .from(contentItems)
+    .where(
+      and(
+        eq(contentItems.articleId, articleId),
+        eq(contentItems.platform, "linkedin"),
+        campaign ? eq(contentItems.campaign, campaign) : isNull(contentItems.campaign),
+        inArray(contentItems.status, REPOST_HISTORY_STATUSES),
+      ),
+    )
+    .orderBy(desc(contentItems.createdAt))
+    .limit(1);
+  return row;
+}
+
 async function runGenerateContent(job: Job) {
-  const { articleId, extractionId, platform, campaign } = job.payload as {
+  const { articleId, extractionId, platform, campaign, forceRepost } = job.payload as {
     articleId: string;
     extractionId: string;
     platform: Platform;
     campaign?: string;
+    forceRepost?: boolean;
   };
 
   const [article] = await db.select().from(articles).where(eq(articles.id, articleId)).limit(1);
@@ -119,6 +154,28 @@ async function runGenerateContent(job: Job) {
     .limit(1);
   if (!extraction) {
     throw new NonRetryableJobError(`Extraction ${extractionId} not found`);
+  }
+
+  // Spec 2 no-repeat gate — LinkedIn only, scoped to the same pipeline
+  // stream (normal vs. a campaign like the evergreen "blitz") the same
+  // way nextLinkedInDailySlot already scopes cadence. A deliberate
+  // repost (forceRepost) skips the gate but still has to clear
+  // checkRepostDistinctness below once generated.
+  let priorLinkedInPost: ContentItemRow | undefined;
+  if (platform === "linkedin") {
+    priorLinkedInPost = await mostRecentLinkedInPost(articleId, campaign ?? null);
+    const gapDays = optionalEnvInt("LINKEDIN_REPOST_GAP_DAYS", DEFAULT_LINKEDIN_REPOST_GAP_DAYS);
+    if (!forceRepost && isWithinLinkedInRepostGap(priorLinkedInPost?.createdAt ?? null, new Date(), gapDays)) {
+      console.log(
+        JSON.stringify({
+          event: "linkedin_repost_skipped",
+          articleId,
+          previousPostAt: priorLinkedInPost!.createdAt.toISOString(),
+          gapDays,
+        }),
+      );
+      return;
+    }
   }
 
   const { ANTHROPIC_API_KEY } = requireEnv("ANTHROPIC_API_KEY");
@@ -139,6 +196,30 @@ async function runGenerateContent(job: Job) {
     extraction.supportedClaims as string[],
   );
 
+  // Spec 2: a forced repost must land on a different angle and opening
+  // line than the post it's repeating — flagged for a reviewer to check
+  // rather than silently dropped or auto-rewritten, same as the
+  // Pinterest quality gate below.
+  const repostFlagsByPost: string[][] = posts.map(() => []);
+  if (platform === "linkedin" && forceRepost && priorLinkedInPost) {
+    const previousCopy = priorLinkedInPost.copyFields as { postText: string; angle: string };
+    const previous = { angle: previousCopy.angle, openingLine: extractOpeningLine(previousCopy.postText) };
+    posts.forEach((post, i) => {
+      const p = post as LinkedinPost;
+      const candidate = { angle: p.angle, openingLine: extractOpeningLine(p.postText) };
+      repostFlagsByPost[i] = checkRepostDistinctness(candidate, previous);
+    });
+  }
+
+  // Spec 4: audience/content-type tags, inferred from the article —
+  // computed once per article/platform pair, not per post (every post
+  // generated from the same extraction describes the same article).
+  const audienceTag = inferAudienceTag(extraction);
+  const topicTag = inferTopicTag(article, extraction);
+  const platformFit = optionalEnvBool("AUDIENCE_PLATFORM_PREFERENCE_ENABLED", true)
+    ? platformFitForArticle(platform, audienceTag, topicTag)
+    : null;
+
   const contentType = CONTENT_TYPE_BY_PLATFORM[platform];
   const insertedItems = await db
     .insert(contentItems)
@@ -150,9 +231,39 @@ async function runGenerateContent(job: Job) {
         copyFields: { ...post, flaggedClaims: flaggedClaimsByPost[i] ?? [] },
         status: "in_review" as const,
         campaign: campaign ?? null,
+        audienceTag,
+        topicTag,
+        platformFit,
+        qualityFlags: repostFlagsByPost[i] ?? [],
       })),
     )
     .returning();
+
+  // Spec 3 Pinterest quality gate, first pass: title/description/link
+  // checks can run immediately; alt-text and the duplicate-pin check
+  // need the real selected photo, which doesn't exist yet at this point
+  // — renderPinterestPinItem below re-runs the full gate once it does,
+  // replacing these flags rather than appending to them.
+  if (platform === "pinterest") {
+    const { SHOPIFY_SHOP_DOMAIN, SHOPIFY_BLOG_HANDLE } = requireEnv("SHOPIFY_SHOP_DOMAIN", "SHOPIFY_BLOG_HANDLE");
+    const articleUrl = articlePublicUrl(SHOPIFY_SHOP_DOMAIN, SHOPIFY_BLOG_HANDLE, article.handle);
+    for (const row of insertedItems) {
+      const copy = row.copyFields as { title: string; description: string; altText: string };
+      const flags = evaluatePinterestPinQuality({
+        articleId: row.articleId,
+        title: copy.title,
+        description: copy.description,
+        altText: copy.altText,
+        topicKeywords: [article.title, extraction.coreSubject, extraction.searchIntent],
+        pinLink: withPinterestUtm(articleUrl, row.id),
+        articleUrl,
+        existingPins: [],
+      });
+      if (flags.length > 0) {
+        await db.update(contentItems).set({ qualityFlags: flags }).where(eq(contentItems.id, row.id));
+      }
+    }
+  }
 
   // Pinterest and Instagram need an actual rendered graphic (Satori
   // template + compositing); LinkedIn just attaches an approved photo
@@ -203,7 +314,7 @@ async function renderPinterestPinItem(
     return;
   }
 
-  const copy = item.copyFields as { title: string; description: string };
+  const copy = item.copyFields as { title: string; description: string; altText: string };
   const imageSrc = await resolveImageSrc(asset.fileUrl);
   const png = await renderPinterestPin(chosenTemplateId, {
     title: copy.title,
@@ -222,6 +333,40 @@ async function renderPinterestPinItem(
     fileUrl,
     status: "rendered",
   });
+
+  // Spec 3 quality gate, second (authoritative) pass — the real photo
+  // is known now, so this replaces the generation-time flags with the
+  // full check set, including alt-text-vs-image and the duplicate-pin
+  // check that couldn't run before an asset was selected.
+  const { SHOPIFY_SHOP_DOMAIN, SHOPIFY_BLOG_HANDLE } = requireEnv("SHOPIFY_SHOP_DOMAIN", "SHOPIFY_BLOG_HANDLE");
+  const articleUrl = articlePublicUrl(SHOPIFY_SHOP_DOMAIN, SHOPIFY_BLOG_HANDLE, article.handle);
+  const existingPinRows = await db
+    .select({ articleId: contentItems.articleId, assetId: contentAssets.sourceAssetId })
+    .from(contentItems)
+    .innerJoin(contentAssets, eq(contentAssets.contentItemId, contentItems.id))
+    .where(
+      and(
+        eq(contentItems.platform, "pinterest"),
+        eq(contentItems.articleId, item.articleId),
+        ne(contentItems.id, item.id),
+        ne(contentItems.status, "rejected"),
+        eq(contentAssets.status, "rendered"),
+      ),
+    );
+  const flags = evaluatePinterestPinQuality({
+    articleId: item.articleId,
+    title: copy.title,
+    description: copy.description,
+    altText: copy.altText,
+    topicKeywords: [article.title, extraction?.coreSubject, extraction?.searchIntent].filter(
+      (k): k is string => Boolean(k),
+    ),
+    pinLink: withPinterestUtm(articleUrl, item.id),
+    articleUrl,
+    image: { assetId: asset.id, tags: asset.tags, notes: asset.notes },
+    existingPins: existingPinRows,
+  });
+  await db.update(contentItems).set({ qualityFlags: flags }).where(eq(contentItems.id, item.id));
 }
 
 async function renderInstagramCarouselItem(
@@ -339,10 +484,25 @@ type PlatformConnectionRow = typeof platformConnections.$inferSelect;
 // (published or permanently failed) so the Review/Scheduled screens —
 // which filter on contentItems.status, not publishTargets.status — stop
 // showing an item the moment it's actually done, one way or the other.
-async function finalizePublished(publishTargetId: string, contentItemId: string, result: { id: string; url: string }) {
+// destination carries the article link + UTM values actually used for
+// this publish (Spec 5 measurability) — null for platforms that don't
+// tag a link (Facebook/Instagram today).
+async function finalizePublished(
+  publishTargetId: string,
+  contentItemId: string,
+  result: { id: string; url: string },
+  destination: { url: string; utm: Record<string, string> } | null,
+) {
   await db
     .update(publishTargets)
-    .set({ status: "published", publishedAt: new Date(), externalPostId: result.id, externalPostUrl: result.url })
+    .set({
+      status: "published",
+      publishedAt: new Date(),
+      externalPostId: result.id,
+      externalPostUrl: result.url,
+      destinationUrl: destination?.url ?? null,
+      utm: destination?.utm ?? null,
+    })
     .where(eq(publishTargets.id, publishTargetId));
   await db.update(contentItems).set({ status: "published" }).where(eq(contentItems.id, contentItemId));
   await db.insert(publishLog).values({
@@ -468,6 +628,12 @@ async function runPublishPost(job: Job) {
 
   await db.update(publishTargets).set({ status: "publishing" }).where(eq(publishTargets.id, target.id));
 
+  // Set inside doPublish's pinterest/linkedin branches to the link +
+  // UTM values actually used for this publish, so finalizePublished can
+  // persist them (Spec 5) — stays null for Facebook/Instagram, which
+  // don't tag a link.
+  let destination: { url: string; utm: Record<string, string> } | null = null;
+
   const doPublish = async (accessToken: string) => {
     if (item.platform === "pinterest") {
       const [asset] = await db
@@ -492,6 +658,10 @@ async function runPublishPost(job: Job) {
       const boardPrivacy = copy.suggestedBoard === PINTEREST_TEST_BOARD_NAME ? "SECRET" : undefined;
       const boardId = await findOrCreateBoard(accessToken, copy.suggestedBoard, boardPrivacy);
       const pinLink = withPinterestUtm(link, item.id);
+      destination = {
+        url: pinLink,
+        utm: { source: "pinterest", medium: "social", campaign: "organic_pins", content: item.id },
+      };
       return createPin(accessToken, {
         title: copy.title,
         description: copy.description,
@@ -506,7 +676,7 @@ async function runPublishPost(job: Job) {
       return createPagePost(accessToken, connection.externalAccountId, { message: copy.postText, link });
     }
     if (item.platform === "linkedin") {
-      const copy = item.copyFields as { postText: string };
+      const copy = item.copyFields as { postText: string; cta?: string };
       // Unlike Pinterest/Instagram, a missing image doesn't block this
       // publish — a LinkedIn post is already complete as a plain link
       // card, so a needs_asset (or not-yet-selected) row just means no
@@ -531,9 +701,23 @@ async function runPublishPost(job: Job) {
         // without it" reasoning as a missing asset.
       }
 
+      // Spec 1: every LinkedIn post ends with one CTA line and one
+      // UTM-tagged link. The same tagged link is used both in the post
+      // body text (composeLinkedInPost) and as the link card's source,
+      // so a click on either path attributes the same way.
+      //
+      // copy.cta is only absent for content_items generated before this
+      // field existed (already approved/scheduled under the old
+      // pipeline, not something this change may touch per "changes
+      // apply to new content only") — those publish exactly as they did
+      // before, untagged, rather than erroring on a field they were
+      // never generated with.
+      const taggedLink = withLinkedInUtm(link, article.handle);
+      destination = copy.cta ? { url: taggedLink, utm: { source: "linkedin", medium: "social", campaign: article.handle } } : null;
+
       return createOrganizationPost(accessToken, connection.externalAccountId, {
-        text: copy.postText,
-        link,
+        text: copy.cta ? composeLinkedInPost(copy.postText, copy.cta, taggedLink) : copy.postText,
+        link: copy.cta ? taggedLink : link,
         linkTitle: article.title,
         thumbnail,
         thumbnailAltText: thumbnail ? article.title : undefined,
@@ -567,7 +751,7 @@ async function runPublishPost(job: Job) {
   let firstError: unknown;
   try {
     const result = await doPublish(accessToken);
-    await finalizePublished(target.id, target.contentItemId, result);
+    await finalizePublished(target.id, target.contentItemId, result, destination);
     return;
   } catch (err) {
     firstError = err;
@@ -585,7 +769,7 @@ async function runPublishPost(job: Job) {
   if (refreshedToken) {
     try {
       const result = await doPublish(refreshedToken);
-      await finalizePublished(target.id, target.contentItemId, result);
+      await finalizePublished(target.id, target.contentItemId, result, destination);
       return;
     } catch (secondErr) {
       // An auth-classified error recurring against a token that was

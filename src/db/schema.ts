@@ -156,6 +156,27 @@ export const contentItems = pgTable("content_items", {
   // src/lib/scheduling.ts — without distorting the normal pipeline's
   // slot math for new-article approvals happening at the same time.
   campaign: text("campaign"),
+  // Audience/content-type tags (Spec 4, one-month test, 2026-10) —
+  // inferred from the source article at generation time (see
+  // inferAudienceTag/inferTopicTag in src/lib/tagging.ts), editable by a
+  // reviewer in the Review Queue. "homeowner" | "trade" and
+  // "how_to" | "comparison" | "buying_guide" | "trade" respectively —
+  // plain text, not an enum, so a wrong early guess at the value set
+  // doesn't need a migration to fix (same precedent as articles.status).
+  audienceTag: text("audience_tag"),
+  topicTag: text("topic_tag"),
+  // Advisory-only platform-fit label from the audience/topic routing
+  // preference (see platformFitForArticle in src/lib/tagging.ts) — null
+  // when AUDIENCE_PLATFORM_PREFERENCE_ENABLED is off. Never gates
+  // generation; purely informational for the reviewer.
+  platformFit: text("platform_fit"),
+  // Non-blocking reasons this item was flagged for a human to check
+  // before approving (Pinterest quality-gate misses, a flagged
+  // deliberate-repost distinctness violation, etc.) — same
+  // "flag, don't silently drop or auto-fix" pattern as copyFields.
+  // flaggedClaims, just not claim-specific, so it lives as its own
+  // column rather than another copyFields key.
+  qualityFlags: text("quality_flags").array().notNull().default([]),
   // Audit counter, NOT a re-review gate. Edits update this row in place
   // and increment version; they do not create a new row. See
   // docs/PHASE_0_PLAN.md §4 for the full in-place-edit rule, including
@@ -201,6 +222,13 @@ export const publishTargets = pgTable("publish_targets", {
   publishedAt: timestamp("published_at", { withTimezone: true }),
   externalPostId: text("external_post_id"),
   externalPostUrl: text("external_post_url"),
+  // The actual outbound link used at publish time (article URL + UTM
+  // params), and the UTM values themselves broken out for easy
+  // querying/export — see Spec 5 (measurability). Null for platforms/
+  // content types that don't carry a destination link (none currently;
+  // kept nullable since not every historical row has this).
+  destinationUrl: text("destination_url"),
+  utm: jsonb("utm"), // { source, medium, campaign }
   status: publishTargetStatusEnum("status").notNull().default("scheduled"),
   errorMessage: text("error_message"),
   // Retry/backoff behavior driven by these two columns is defined in

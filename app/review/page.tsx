@@ -2,6 +2,7 @@ import { asc, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db/client";
 import { articles, contentAssets, contentItems } from "@/db/schema";
 import { REVIEW_QUEUE_STATUSES } from "@/lib/review";
+import type { AudienceTag, TopicTag } from "@/lib/tagging";
 import {
   applyInstruction,
   approveAllInReview,
@@ -10,7 +11,11 @@ import {
   regenerateImage,
   rejectContentItem,
   updateContentItemCopy,
+  updateContentItemTags,
 } from "./actions";
+
+const AUDIENCE_TAG_OPTIONS: AudienceTag[] = ["homeowner", "trade"];
+const TOPIC_TAG_OPTIONS: TopicTag[] = ["how_to", "comparison", "buying_guide", "trade"];
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +27,10 @@ const REGENERABLE_FIELDS: Record<string, { key: string; label: string }[]> = {
     { key: "title", label: "Title" },
     { key: "description", label: "Description" },
   ],
-  linkedin_post: [{ key: "postText", label: "Post text" }],
+  linkedin_post: [
+    { key: "postText", label: "Post text" },
+    { key: "cta", label: "CTA" },
+  ],
   fb_post: [{ key: "postText", label: "Post text" }],
   ig_carousel: [{ key: "caption", label: "Caption" }],
 };
@@ -52,9 +60,38 @@ function ImageSection({ item, asset }: { item: ContentItemRow; asset: ContentAss
   );
 }
 
+function TagsForm({ item }: { item: ContentItemRow }) {
+  return (
+    <form action={updateContentItemTags} className="tags-form">
+      <input type="hidden" name="id" value={item.id} />
+      <label>
+        <span>Audience</span>
+        <select name="audienceTag" defaultValue={item.audienceTag ?? ""}>
+          <option value="">(unset)</option>
+          {AUDIENCE_TAG_OPTIONS.map((tag) => (
+            <option key={tag} value={tag}>{tag}</option>
+          ))}
+        </select>
+      </label>
+      <label>
+        <span>Content type</span>
+        <select name="topicTag" defaultValue={item.topicTag ?? ""}>
+          <option value="">(unset)</option>
+          {TOPIC_TAG_OPTIONS.map((tag) => (
+            <option key={tag} value={tag}>{tag}</option>
+          ))}
+        </select>
+      </label>
+      {item.platformFit && <span className={`platform-fit platform-fit-${item.platformFit}`}>{item.platformFit.replace("_", " ")}</span>}
+      <button type="submit">Save tags</button>
+    </form>
+  );
+}
+
 function CopyFieldsForm({ item, asset }: { item: ContentItemRow; asset: ContentAssetRow | undefined }) {
   const copy = item.copyFields as Record<string, unknown>;
   const flaggedClaims = (copy.flaggedClaims as string[] | undefined) ?? [];
+  const qualityFlags = item.qualityFlags ?? [];
 
   const fields = Object.entries(copy).filter(([key]) => key !== "flaggedClaims");
 
@@ -70,6 +107,19 @@ function CopyFieldsForm({ item, asset }: { item: ContentItemRow; asset: ContentA
           </ul>
         </div>
       )}
+
+      {qualityFlags.length > 0 && (
+        <div className="flag-warning">
+          <strong>Quality checks flagged — not blocked, but check before approving:</strong>
+          <ul>
+            {qualityFlags.map((flag) => (
+              <li key={flag}>{flag}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <TagsForm item={item} />
 
       <ImageSection item={item} asset={asset} />
 

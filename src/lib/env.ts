@@ -50,3 +50,19 @@ export function requireEnv<K extends keyof Env>(...keys: K[]): Pick<Env, K> {
   }
   return values;
 }
+
+// Optional, defaulted settings — unlike requireEnv's hard secrets, these
+// are tunable knobs that must keep working with nothing set at all, so
+// every caller gets a sane default rather than a thrown error.
+export function optionalEnvInt(key: string, fallback: number): number {
+  const raw = process.env[key];
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+export function optionalEnvBool(key: string, fallback: boolean): boolean {
+  const raw = process.env[key];
+  if (raw === undefined || raw === "") return fallback;
+  return raw === "true";
+}

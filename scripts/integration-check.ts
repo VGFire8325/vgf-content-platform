@@ -164,7 +164,12 @@ async function main() {
       articleId: articleRow.id,
       platform: "linkedin",
       contentType: "linkedin_post",
-      copyFields: { postText: "A professional reframe of the article.", angle: "cost efficiency", flaggedClaims: [] },
+      copyFields: {
+        postText: "A professional reframe of the article.",
+        angle: "cost efficiency",
+        cta: "See the full installation guide.",
+        flaggedClaims: [],
+      },
       status: "in_review",
     })
     .returning();

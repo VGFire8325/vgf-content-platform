@@ -89,6 +89,25 @@ export async function approveAllInReview(formData: FormData) {
   revalidatePath(REVIEW_PATH);
 }
 
+// Spec 4: audience/content-type tags are metadata, not generated copy —
+// editing them doesn't change what gets published, so unlike
+// updateContentItemCopy below this never reverts status or cancels a
+// pending publish.
+export async function updateContentItemTags(formData: FormData) {
+  const id = requireString(formData, "id");
+  const audienceTag = formData.get("audienceTag");
+  const topicTag = formData.get("topicTag");
+  await db
+    .update(contentItems)
+    .set({
+      audienceTag: typeof audienceTag === "string" && audienceTag ? audienceTag : null,
+      topicTag: typeof topicTag === "string" && topicTag ? topicTag : null,
+      updatedAt: new Date(),
+    })
+    .where(eq(contentItems.id, id));
+  revalidatePath(REVIEW_PATH);
+}
+
 // Direct field edit (the inline copy-edit form) — no model call, just
 // updates the row. Still goes through nextStatusAfterEdit/
 // shouldCancelPendingPublish so a post-approval edit gets the same

@@ -37,6 +37,13 @@ const pinterestPinSchema = z.object({
 const linkedinPostSchema = z.object({
   postText: z.string().min(1),
   angle: z.string().min(1),
+  // Benefit-led CTA line the publish step appends after postText, ahead
+  // of the UTM-tagged article link (Spec 1) — generated per-article
+  // rather than a fixed string so it actually names what the reader
+  // gets, same reasoning as angle. Never a link itself; the publish
+  // step is the only place the link gets added (composeLinkedInPost in
+  // src/lib/linkedin-post.ts).
+  cta: z.string().min(1).max(140),
 });
 
 const facebookPostSchema = z.object({
@@ -108,8 +115,14 @@ Brand voice: sophisticated, not salesy. Match the tone of these examples:
 contractors, remodelers, architects, designers, property managers. Do
 not summarize or copy the consumer article's intro — take a
 specification, installation, or project-planning angle a professional
-would actually care about. Return postText (the LinkedIn post body) and
-angle (one sentence naming which professional angle you took).`,
+would actually care about. Return:
+- postText: the LinkedIn post body. Do not include a call-to-action
+  line, a link, or a URL — those are appended automatically after this.
+- angle: one sentence naming which professional angle you took.
+- cta: one short, benefit-led call-to-action sentence (e.g. "See which
+  placement fits your room" or "Compare the options before you
+  choose") naming what the reader gets by clicking through. Never a
+  generic "learn more," and never a link itself.`,
   facebook: `Write one lightweight, credible Facebook post based on this
 article. Facebook is a light-touch, roughly-weekly channel here — the
 goal is staying active and credible, not promotional. Return postText
@@ -154,8 +167,8 @@ function postJsonSchema(platform: Platform): { properties: Record<string, unknow
       };
     case "linkedin":
       return {
-        properties: { postText: { type: "string" }, angle: { type: "string" } },
-        required: ["postText", "angle"],
+        properties: { postText: { type: "string" }, angle: { type: "string" }, cta: { type: "string" } },
+        required: ["postText", "angle", "cta"],
       };
     case "facebook":
       return {
@@ -259,8 +272,10 @@ export function claimBearingText(platform: Platform, post: PlatformPost): string
       const p = post as PinterestPin;
       return `${p.title}\n${p.description}`;
     }
-    case "linkedin":
-      return (post as LinkedinPost).postText;
+    case "linkedin": {
+      const p = post as LinkedinPost;
+      return `${p.postText}\n${p.cta}`;
+    }
     case "facebook":
       return (post as FacebookPost).postText;
     case "instagram": {

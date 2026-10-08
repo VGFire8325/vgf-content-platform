@@ -74,6 +74,29 @@ test("linkedin schema rejects a post missing the angle", () => {
   assert.equal(result.success, false);
 });
 
+test("linkedin schema rejects a post missing the cta (Spec 1)", () => {
+  const result = POST_SCHEMA_BY_PLATFORM.linkedin.safeParse({ postText: "text", angle: "cost efficiency" });
+  assert.equal(result.success, false);
+});
+
+test("linkedin schema accepts a well-formed post with postText, angle, and cta", () => {
+  const result = POST_SCHEMA_BY_PLATFORM.linkedin.safeParse({
+    postText: "Placement affects clearance requirements more than most people expect.",
+    angle: "installation planning",
+    cta: "See which placement fits your room.",
+  });
+  assert.equal(result.success, true);
+});
+
+test("claimBearingText includes the cta for linkedin, so an invented claim in the CTA still gets grounded", () => {
+  const text = claimBearingText("linkedin", {
+    postText: "Placement affects clearance.",
+    angle: "installation planning",
+    cta: "See which placement fits your room.",
+  });
+  assert.equal(text, "Placement affects clearance.\nSee which placement fits your room.");
+});
+
 test("claimBearingText combines title and description for pinterest", () => {
   const text = claimBearingText("pinterest", {
     title: "Title",
