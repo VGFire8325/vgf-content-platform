@@ -56,7 +56,16 @@ export async function approveContentItem(formData: FormData) {
     .where(and(eq(contentItems.id, id), eq(contentItems.status, "in_review")))
     .returning();
   if (updated) {
-    await scheduleApprovedItem(db, updated);
+    // A scheduling failure here shouldn't crash the whole Review page —
+    // see the matching note in approveAllInReview below. The item is
+    // left "approved" with no publish_targets row, the same recoverable
+    // state scheduleUnscheduledApprovedItems already exists to sweep up
+    // (see src/lib/publish-scheduling.ts).
+    try {
+      await scheduleApprovedItem(db, updated);
+    } catch (err) {
+      console.error(`scheduleApprovedItem failed for content_item ${updated.id}:`, err);
+    }
   }
   revalidatePath(REVIEW_PATH);
 }
@@ -83,8 +92,20 @@ export async function approveAllInReview(formData: FormData) {
     .set({ status: "approved", updatedAt: new Date() })
     .where(and(...conditions))
     .returning();
+  // Hit in production (2026-10-08): one item's scheduling failure threw
+  // out of this loop, crashing the whole Review page and leaving every
+  // item after it in the batch "approved" but never scheduled, with no
+  // way to tell from the UI. Catching per item means one failure can't
+  // take the rest of the batch down with it — each item is left either
+  // scheduled or "approved" with no publish_targets row, the same
+  // recoverable state scheduleUnscheduledApprovedItems already exists
+  // to sweep up (see src/lib/publish-scheduling.ts).
   for (const item of updated) {
-    await scheduleApprovedItem(db, item);
+    try {
+      await scheduleApprovedItem(db, item);
+    } catch (err) {
+      console.error(`scheduleApprovedItem failed for content_item ${item.id}:`, err);
+    }
   }
   revalidatePath(REVIEW_PATH);
 }

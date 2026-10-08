@@ -13,13 +13,23 @@ export const PINTEREST_SCHEDULE_START_HOUR_UTC = 14; // ~10am US Eastern
 // (YYYY-MM-DD keys, UTC) starting from `startDate`, finds the first day
 // under the cap and returns a slot time offset by how many are already
 // on that day, so same-day pins don't all land simultaneously.
+// Hit in production (2026-10-08): approving a batch of pins while 28
+// were already scheduled (14 days * 2/day, completely full) threw this
+// out of an approve server action, crashing the Review page entirely
+// and leaving two items stuck "approved" with no publish_targets row
+// (nothing catches this partway through approveAllInReview's loop).
+// 14 days' worth of capacity is nowhere near enough backlog headroom —
+// raised to 180 (360 pins' worth at the current cap) so ordinary
+// approval volume can't hit this again; still finite so a genuinely
+// pathological input (e.g. maxPerDay <= 0) can't loop forever.
+const MAX_DAYS_AHEAD = 180;
+
 export function pickPinterestSlot(
   existingCountsByDate: Record<string, number>,
   startDate: Date,
   maxPerDay: number = PINTEREST_MAX_PER_DAY,
 ): Date {
   const day = new Date(Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), startDate.getUTCDate()));
-  const MAX_DAYS_AHEAD = 14; // hard cap so this can't loop forever
   for (let i = 0; i < MAX_DAYS_AHEAD; i++) {
     const dateKey = day.toISOString().slice(0, 10);
     const countSoFar = existingCountsByDate[dateKey] ?? 0;

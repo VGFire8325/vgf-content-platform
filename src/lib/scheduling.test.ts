@@ -28,6 +28,23 @@ test("pickPinterestSlot skips multiple full days", () => {
   assert.equal(slot.toISOString().slice(0, 10), "2026-08-09");
 });
 
+test("pickPinterestSlot finds a slot well past the old 14-day cap (the real production case: 28 days fully booked)", () => {
+  const start = new Date("2026-08-06T00:00:00Z");
+  const existingCountsByDate: Record<string, number> = {};
+  const day = new Date(start);
+  for (let i = 0; i < 28; i++) {
+    existingCountsByDate[day.toISOString().slice(0, 10)] = 2;
+    day.setUTCDate(day.getUTCDate() + 1);
+  }
+  const slot = pickPinterestSlot(existingCountsByDate, start, 2);
+  assert.equal(slot.toISOString().slice(0, 10), "2026-09-03"); // day 29
+});
+
+test("pickPinterestSlot still throws rather than looping forever on a pathological input", () => {
+  const start = new Date("2026-08-06T00:00:00Z");
+  assert.throws(() => pickPinterestSlot({}, start, 0), /Could not find a Pinterest schedule slot/);
+});
+
 test("pickFacebookSlot schedules ~1 hour out when nothing has posted yet", () => {
   const now = new Date("2026-08-06T12:00:00Z");
   const slot = pickFacebookSlot(null, now);
