@@ -71,6 +71,30 @@ export type ArticleMatchContext = {
 
 const semanticMatchSchema = z.object({ reasoning: z.string(), matchedAssetIds: z.array(z.string()) });
 
+// Observed in production (2026-10): matchedAssetIds sometimes comes
+// back missing entirely from the tool_use input, failing schema
+// validation on a field the model just didn't echo back rather than
+// anything wrong with the call — same class of non-compliance
+// normalizeExtractionInput already coerces around in anthropic.ts. A
+// missing or malformed matchedAssetIds is treated the same as the
+// model explicitly saying "no match" (already a valid, instructed
+// outcome — see the system prompt below), not a hard failure; a
+// string gets split the same way a newline-joined list would.
+export function normalizeSemanticMatchInput(input: unknown): unknown {
+  if (typeof input !== "object" || input === null) return input;
+  const obj = input as Record<string, unknown>;
+  const raw = obj.matchedAssetIds;
+  const matchedAssetIds = Array.isArray(raw)
+    ? raw
+    : typeof raw === "string"
+      ? raw
+          .split(/\r?\n+/)
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [];
+  return { ...obj, matchedAssetIds };
+}
+
 // `reasoning` is required and declared first: tool_choice forces a
 // structured call with no room for free-text deliberation beforehand,
 // so without a field to think out loud in first, a genuinely borderline
@@ -141,6 +165,7 @@ Pick up to ${limit} best-fitting photo id(s), ordered best first.`;
     tool: SEMANTIC_MATCH_TOOL,
     schema: semanticMatchSchema,
     maxTokens: 1024, // room for the reasoning field ahead of the id array, not just the array itself
+    normalizeInput: normalizeSemanticMatchInput,
   });
 
   const byId = new Map(candidates.map((c) => [c.id, c]));

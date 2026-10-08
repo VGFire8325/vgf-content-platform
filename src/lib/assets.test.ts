@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dedupeById, filterUnderReuseCap, pickFallbackAsset, rankAssetsByScore, scoreAssetMatch } from "./assets";
+import {
+  dedupeById,
+  filterUnderReuseCap,
+  normalizeSemanticMatchInput,
+  pickFallbackAsset,
+  rankAssetsByScore,
+  scoreAssetMatch,
+} from "./assets";
 
 test("scoreAssetMatch counts overlapping tags case-insensitively", () => {
   const score = scoreAssetMatch(["Linear", "living-room", "Install"], ["linear", "buying-guide"]);
@@ -162,4 +169,24 @@ test("filterUnderReuseCap relaxes the cap rather than returning nothing when eve
     filterUnderReuseCap(candidates, usageCounts, 3).map((c) => c.id),
     ["a", "b"],
   );
+});
+
+test("normalizeSemanticMatchInput passes a well-formed matchedAssetIds array through unchanged", () => {
+  const normalized = normalizeSemanticMatchInput({ reasoning: "x", matchedAssetIds: ["a", "b"] });
+  assert.deepEqual(normalized, { reasoning: "x", matchedAssetIds: ["a", "b"] });
+});
+
+test("normalizeSemanticMatchInput defaults a missing matchedAssetIds to an empty array (the real production failure)", () => {
+  const normalized = normalizeSemanticMatchInput({ reasoning: "Nothing in the library fits this article." });
+  assert.deepEqual(normalized, { reasoning: "Nothing in the library fits this article.", matchedAssetIds: [] });
+});
+
+test("normalizeSemanticMatchInput coerces a newline-joined matchedAssetIds string into an array", () => {
+  const normalized = normalizeSemanticMatchInput({ reasoning: "x", matchedAssetIds: "asset-1\nasset-2" });
+  assert.deepEqual(normalized, { reasoning: "x", matchedAssetIds: ["asset-1", "asset-2"] });
+});
+
+test("normalizeSemanticMatchInput defaults a non-string, non-array matchedAssetIds (e.g. null) to an empty array", () => {
+  const normalized = normalizeSemanticMatchInput({ reasoning: "x", matchedAssetIds: null });
+  assert.deepEqual(normalized, { reasoning: "x", matchedAssetIds: [] });
 });
