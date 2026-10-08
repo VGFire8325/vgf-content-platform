@@ -29,6 +29,7 @@ export const POSTS_PER_PLATFORM: Record<Platform, number> = {
 const pinterestPinSchema = z.object({
   title: z.string().min(1).max(100),
   description: z.string().min(1).max(500),
+  altText: z.string().min(1),
   suggestedBoard: z.string().min(1),
   imageConcept: z.string().min(1),
 });
@@ -66,16 +67,43 @@ function postsArraySchema(platform: Platform) {
 }
 
 const PLATFORM_INSTRUCTIONS: Record<Platform, string> = {
-  pinterest: `Generate exactly one Pinterest pin concept for this article: a
-title (Pinterest-style, benefit- or question-driven, under 100
-characters), a search-oriented description written the way someone
-would actually search Pinterest, a suggested board name, and an
-imageConcept describing what the pin graphic should show. The photo
-must show the product installed in a real room or setting — never an
-isolated studio/white-background product shot and never an AI-rendered
-visual. If you can't describe a plausible installed-in-setting shot for
-this article, say so in the imageConcept rather than defaulting to a
-plain product photo.`,
+  pinterest: `Generate exactly one Pinterest pin concept for this article.
+
+Return:
+- title: the main search phrase in natural wording — how someone would
+  actually phrase what they're looking for, not a keyword fragment.
+  Under 100 characters.
+- description: 1-2 natural sentences, written the way a person would
+  write them. Work the primary keyword into the first sentence and one
+  or two related terms in naturally elsewhere. Say what the reader will
+  learn or decide. Never a pipe-separated list of search phrases, never
+  hashtags, never keyword stuffing.
+- altText: a plain, literal description of what the pin's photo shows,
+  for someone who can't see the image — not marketing copy.
+- suggestedBoard: a board name for this topic.
+- imageConcept: what the pin graphic should show. The photo must show
+  the product installed in a real room or setting — never an isolated
+  studio/white-background product shot and never an AI-rendered visual.
+  If you can't describe a plausible installed-in-setting shot for this
+  article, say so rather than defaulting to a plain product photo.
+
+Brand voice: sophisticated, not salesy. Match the tone of these examples:
+
+1. Article "Electric Fireplace Sizes Explained: 26 to 120 Inches"
+   title: "How to Choose the Right Electric Fireplace Size for Your Wall"
+   description: "Not sure how wide your electric fireplace should be? This guide walks through sizing for your wall, your room, and your TV setup, so you pick the right fit the first time."
+
+2. Article "Built-In vs Wall Mounted Electric Fireplaces"
+   title: "Built-In or Wall Mounted Electric Fireplace? How to Decide"
+   description: "Building a media wall or updating a room? Here's how built-in and wall mounted electric fireplaces compare for remodels, bedrooms, and TV walls, and which one suits your project."
+
+3. Article "Water Vapor Fireplaces: Everything You Need to Know"
+   title: "Water Vapor Fireplaces: Are They Worth It?"
+   description: "Water vapor fireplaces create a strikingly realistic flame effect. This guide covers how they work, where they fit best, what maintenance involves, and what to expect on cost."
+
+4. Article "Can You Mount a TV Above an Electric Fireplace?"
+   title: "Can You Mount a TV Above an Electric Fireplace?"
+   description: "A TV above the fireplace is a popular layout, but heat and wall placement matter. Here's what to check before you hang the screen."`,
   linkedin: `Reframe this article for a professional audience: builders,
 contractors, remodelers, architects, designers, property managers. Do
 not summarize or copy the consumer article's intro — take a
@@ -118,10 +146,11 @@ function postJsonSchema(platform: Platform): { properties: Record<string, unknow
         properties: {
           title: { type: "string" },
           description: { type: "string" },
+          altText: { type: "string" },
           suggestedBoard: { type: "string" },
           imageConcept: { type: "string" },
         },
-        required: ["title", "description", "suggestedBoard", "imageConcept"],
+        required: ["title", "description", "altText", "suggestedBoard", "imageConcept"],
       };
     case "linkedin":
       return {

@@ -110,7 +110,7 @@ async function main() {
       articleId: articleRow.id,
       platform: "pinterest",
       contentType: "pinterest_pin",
-      copyFields: { title: "Original Title", description: "Original description", suggestedBoard: "Ideas", imageConcept: "concept", flaggedClaims: [] },
+      copyFields: { title: "Original Title", description: "Original description", altText: "Original alt text", suggestedBoard: "Ideas", imageConcept: "concept", flaggedClaims: [] },
       status: "in_review",
     })
     .returning();

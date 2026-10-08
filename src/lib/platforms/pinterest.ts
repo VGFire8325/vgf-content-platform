@@ -126,6 +126,7 @@ export async function findOrCreateBoard(
 export interface CreatePinInput {
   title: string;
   description: string;
+  altText: string;
   link: string;
   boardId: string;
   imageUrl: string;
@@ -142,6 +143,7 @@ export async function createPin(accessToken: string, input: CreatePinInput): Pro
     body: JSON.stringify({
       title: input.title,
       description: input.description,
+      alt_text: input.altText,
       link: input.link,
       board_id: input.boardId,
       media_source: { source_type: "image_url", url: input.imageUrl },

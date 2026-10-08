@@ -488,11 +488,18 @@ async function runPublishPost(job: Job) {
         // of going failed_final after one shot.
         throw new Error("No rendered image for this pin yet — publish ran before render_image finished");
       }
-      const copy = item.copyFields as { title: string; description: string; suggestedBoard: string };
+      const copy = item.copyFields as { title: string; description: string; altText: string; suggestedBoard: string };
       const boardPrivacy = copy.suggestedBoard === PINTEREST_TEST_BOARD_NAME ? "SECRET" : undefined;
       const boardId = await findOrCreateBoard(accessToken, copy.suggestedBoard, boardPrivacy);
       const pinLink = withPinterestUtm(link, item.id);
-      return createPin(accessToken, { title: copy.title, description: copy.description, link: pinLink, boardId, imageUrl: asset.fileUrl });
+      return createPin(accessToken, {
+        title: copy.title,
+        description: copy.description,
+        altText: copy.altText,
+        link: pinLink,
+        boardId,
+        imageUrl: asset.fileUrl,
+      });
     }
     if (item.platform === "facebook") {
       const copy = item.copyFields as { postText: string };

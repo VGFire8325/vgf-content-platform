@@ -43,6 +43,7 @@ test("pinterest schema accepts a well-formed pin", () => {
   const result = POST_SCHEMA_BY_PLATFORM.pinterest.safeParse({
     title: "How to Size a Linear Electric Fireplace",
     description: "A quick guide to matching BTU output to room size for linear electric fireplaces.",
+    altText: "Linear electric fireplace built into a living room wall",
     suggestedBoard: "Electric Fireplace Ideas",
     imageConcept: "Wide shot of an approved linear fireplace install in a living room.",
   });
@@ -53,6 +54,7 @@ test("pinterest schema rejects a title over 100 characters", () => {
   const result = POST_SCHEMA_BY_PLATFORM.pinterest.safeParse({
     title: "x".repeat(101),
     description: "desc",
+    altText: "alt",
     suggestedBoard: "board",
     imageConcept: "concept",
   });
@@ -76,6 +78,7 @@ test("claimBearingText combines title and description for pinterest", () => {
   const text = claimBearingText("pinterest", {
     title: "Title",
     description: "Description",
+    altText: "Alt text",
     suggestedBoard: "Board",
     imageConcept: "Concept",
   });
