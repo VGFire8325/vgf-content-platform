@@ -350,3 +350,50 @@ ${posts.map((post, i) => `[${i}] ${claimBearingText(platform, post)}`).join("\n\
   const flagsByIndex = new Map(results.map((r) => [r.index, r.flaggedClaims]));
   return posts.map((_, i) => flagsByIndex.get(i) ?? []);
 }
+
+export const altTextResultSchema = z.object({ altText: z.string().min(1) });
+
+const ALT_TEXT_TOOL: Anthropic.Tool = {
+  name: "record_alt_text",
+  description: "Records plain, literal alt text for a photo, based only on its tags and note.",
+  input_schema: {
+    type: "object",
+    properties: { altText: { type: "string" } },
+    required: ["altText"],
+  },
+};
+
+const ALT_TEXT_SYSTEM_PROMPT = `${BRAND_CORE}
+
+Write one sentence of plain, literal alt text for a product photo, for
+someone who can't see the image. Base it only on the tags and note
+given below — never invent a room, a person, an action, or any detail
+they don't imply. The asset library here is mostly plain product
+photos (imported from Shopify listings), not installed-in-room
+lifestyle shots — if the tags/note only identify a product, describe
+it as that: a product photo of that item, not a scene you're
+imagining around it.`;
+
+// Pinterest pin copy's altText is written at generation time, before
+// render_image has picked the real photo — grounded only in the
+// imagined imageConcept, not anything about the actual asset. For a
+// library of plain product photos, that produced alt text describing
+// elaborate installed/construction scenes with nothing to do with the
+// real (often plain) product shot that ended up being used. Called
+// from renderPinterestPinItem once the real asset is known, so this
+// replaces that placeholder with something grounded in what the photo
+// actually is.
+export async function writeAltTextForAsset(
+  client: Anthropic,
+  asset: { tags: string[]; notes?: string | null },
+): Promise<string> {
+  const userContent = `Tags: ${asset.tags.join(", ") || "(none)"}\nNote: ${asset.notes ?? "(none)"}`;
+  const { altText } = await callStructuredTool(client, {
+    system: ALT_TEXT_SYSTEM_PROMPT,
+    userContent,
+    tool: ALT_TEXT_TOOL,
+    schema: altTextResultSchema,
+    maxTokens: 256,
+  });
+  return altText;
+}

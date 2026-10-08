@@ -169,6 +169,44 @@ async function recentlyUsedAssetIds(db: typeof DbClient, windowDays: number): Pr
   return new Set(rows.map((r) => r.sourceAssetId).filter((id): id is string => id !== null));
 }
 
+// How many times one asset can be used within RECENT_ASSET_WINDOW_DAYS
+// before it's excluded from new picks entirely — found after a real
+// production case where a 108-photo library still handed the same few
+// "generic enough to fit anything" photos to 10-30+ different articles,
+// because the binary recentlyUsed exclusion only ever asked "used at
+// all in the window?", never "used how many times?" With a 108-asset
+// library against ~54 pending articles, exhausting the under-cap pool
+// shouldn't happen in practice — but if it ever does, the cap is
+// relaxed rather than leaving the item at needs_asset (same "better an
+// imperfect photo than none" reasoning as the rest of this file).
+const MAX_ASSET_REUSE_PER_WINDOW = 3;
+
+async function assetUsageCounts(db: typeof DbClient, windowDays: number): Promise<Map<string, number>> {
+  const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
+  const rows = await db
+    .select({ sourceAssetId: contentAssets.sourceAssetId })
+    .from(contentAssets)
+    .where(and(isNotNull(contentAssets.sourceAssetId), gt(contentAssets.createdAt, since)));
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    if (!row.sourceAssetId) continue;
+    counts.set(row.sourceAssetId, (counts.get(row.sourceAssetId) ?? 0) + 1);
+  }
+  return counts;
+}
+
+// Pure so the cap-then-relax behavior is cheap to unit test directly:
+// filters candidates down to ones under the cap, but returns the full
+// list unfiltered if that would otherwise leave nothing to pick from.
+export function filterUnderReuseCap<T extends { id: string }>(
+  candidates: T[],
+  usageCounts: Map<string, number>,
+  maxReuse: number = MAX_ASSET_REUSE_PER_WINDOW,
+): T[] {
+  const underCap = candidates.filter((c) => (usageCounts.get(c.id) ?? 0) < maxReuse);
+  return underCap.length > 0 ? underCap : candidates;
+}
+
 // Exact overlap, then the semantic pass, against a single candidate pool.
 async function bestMatches(
   client: Anthropic,
@@ -279,10 +317,12 @@ export async function selectAssetForArticle(
   client: Anthropic,
   article: ArticleMatchContext,
 ): Promise<AssetRow | null> {
-  const candidates = await db.select().from(assetLibrary).orderBy(desc(assetLibrary.uploadedAt));
-  if (candidates.length === 0) return null;
+  const allCandidates = await db.select().from(assetLibrary).orderBy(desc(assetLibrary.uploadedAt));
+  if (allCandidates.length === 0) return null;
 
   const recentlyUsed = await recentlyUsedAssetIds(db, RECENT_ASSET_WINDOW_DAYS);
+  const usageCounts = await assetUsageCounts(db, RECENT_ASSET_WINDOW_DAYS);
+  const candidates = filterUnderReuseCap(allCandidates, usageCounts);
   const fresh = candidates.filter((c) => !recentlyUsed.has(c.id));
 
   const [freshMatch] = await bestMatches(client, article, fresh, 1);
@@ -305,10 +345,12 @@ export async function selectAssetsForArticle(
   article: ArticleMatchContext,
   limit: number,
 ): Promise<AssetRow[]> {
-  const candidates = await db.select().from(assetLibrary).orderBy(desc(assetLibrary.uploadedAt));
-  if (candidates.length === 0) return [];
+  const allCandidates = await db.select().from(assetLibrary).orderBy(desc(assetLibrary.uploadedAt));
+  if (allCandidates.length === 0) return [];
 
   const recentlyUsed = await recentlyUsedAssetIds(db, RECENT_ASSET_WINDOW_DAYS);
+  const usageCounts = await assetUsageCounts(db, RECENT_ASSET_WINDOW_DAYS);
+  const candidates = filterUnderReuseCap(allCandidates, usageCounts);
   const fresh = candidates.filter((c) => !recentlyUsed.has(c.id));
 
   const freshMatches = await bestMatches(client, article, fresh, limit);

@@ -17,7 +17,13 @@ import { createAnthropicClient, extractArticle } from "@/lib/anthropic";
 import { articlePublicUrl, withLinkedInUtm, withPinterestUtm } from "@/lib/article-url";
 import { composeLinkedInPost } from "@/lib/linkedin-post";
 import { optionalEnvBool, optionalEnvInt, requireEnv } from "@/lib/env";
-import { CONTENT_TYPE_BY_PLATFORM, generatePlatformContent, groundPosts, type LinkedinPost } from "@/lib/generation";
+import {
+  CONTENT_TYPE_BY_PLATFORM,
+  generatePlatformContent,
+  groundPosts,
+  writeAltTextForAsset,
+  type LinkedinPost,
+} from "@/lib/generation";
 import { claimDueJobs, enqueueJob, markJobFailed, markJobSucceeded } from "@/lib/jobs";
 import { evaluatePinterestPinQuality } from "@/lib/pinterest-quality";
 import { PlatformAuthError, PlatformValidationError } from "@/lib/platforms/errors";
@@ -334,6 +340,16 @@ async function renderPinterestPinItem(
     status: "rendered",
   });
 
+  // User-reported (2026-10): altText was written at generation time,
+  // before the real photo was known, grounded only in the imagined
+  // imageConcept — for a library of plain product photos that produced
+  // alt text describing elaborate installed/construction scenes with
+  // nothing to do with the actual (often plain) product shot that got
+  // used. Rewrite it now from the real asset's own tags/notes, the only
+  // things actually known about the photo — never invented.
+  const groundedAltText = await writeAltTextForAsset(client, { tags: asset.tags, notes: asset.notes });
+  const updatedCopyFields = { ...(item.copyFields as Record<string, unknown>), altText: groundedAltText };
+
   // Spec 3 quality gate, second (authoritative) pass — the real photo
   // is known now, so this replaces the generation-time flags with the
   // full check set, including alt-text-vs-image and the duplicate-pin
@@ -357,7 +373,7 @@ async function renderPinterestPinItem(
     articleId: item.articleId,
     title: copy.title,
     description: copy.description,
-    altText: copy.altText,
+    altText: groundedAltText,
     topicKeywords: [article.title, extraction?.coreSubject, extraction?.searchIntent].filter(
       (k): k is string => Boolean(k),
     ),
@@ -366,7 +382,10 @@ async function renderPinterestPinItem(
     image: { assetId: asset.id, tags: asset.tags, notes: asset.notes },
     existingPins: existingPinRows,
   });
-  await db.update(contentItems).set({ qualityFlags: flags }).where(eq(contentItems.id, item.id));
+  await db
+    .update(contentItems)
+    .set({ copyFields: updatedCopyFields, qualityFlags: flags })
+    .where(eq(contentItems.id, item.id));
 }
 
 async function renderInstagramCarouselItem(

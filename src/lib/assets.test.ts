@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dedupeById, pickFallbackAsset, rankAssetsByScore, scoreAssetMatch } from "./assets";
+import { dedupeById, filterUnderReuseCap, pickFallbackAsset, rankAssetsByScore, scoreAssetMatch } from "./assets";
 
 test("scoreAssetMatch counts overlapping tags case-insensitively", () => {
   const score = scoreAssetMatch(["Linear", "living-room", "Install"], ["linear", "buying-guide"]);
@@ -124,4 +124,42 @@ test("pickFallbackAsset breaks a relevance tie toward the not-recently-used cand
   const recentlyUsed = new Set(["used"]);
   const article = { title: "Electric Fireplace Insert Buying Guide", tags: [] };
   assert.equal(pickFallbackAsset(candidates, recentlyUsed, article).id, "fresh");
+});
+
+test("filterUnderReuseCap excludes an asset that's hit the cap", () => {
+  const candidates = [{ id: "overused" }, { id: "under-cap" }];
+  const usageCounts = new Map([["overused", 3]]);
+  assert.deepEqual(
+    filterUnderReuseCap(candidates, usageCounts, 3).map((c) => c.id),
+    ["under-cap"],
+  );
+});
+
+test("filterUnderReuseCap reproduces the real production case: one photo handed to 31 different articles", () => {
+  const candidates = [{ id: "overused-photo" }, { id: "rarely-used" }];
+  const usageCounts = new Map([
+    ["overused-photo", 31],
+    ["rarely-used", 1],
+  ]);
+  assert.deepEqual(
+    filterUnderReuseCap(candidates, usageCounts).map((c) => c.id),
+    ["rarely-used"],
+  );
+});
+
+test("filterUnderReuseCap treats an asset with no recorded usage as under the cap", () => {
+  const candidates = [{ id: "never-used" }];
+  assert.deepEqual(filterUnderReuseCap(candidates, new Map(), 3).map((c) => c.id), ["never-used"]);
+});
+
+test("filterUnderReuseCap relaxes the cap rather than returning nothing when every candidate is over it", () => {
+  const candidates = [{ id: "a" }, { id: "b" }];
+  const usageCounts = new Map([
+    ["a", 5],
+    ["b", 5],
+  ]);
+  assert.deepEqual(
+    filterUnderReuseCap(candidates, usageCounts, 3).map((c) => c.id),
+    ["a", "b"],
+  );
 });

@@ -4,6 +4,7 @@ import {
   CONTENT_TYPE_BY_PLATFORM,
   POST_SCHEMA_BY_PLATFORM,
   POSTS_PER_PLATFORM,
+  altTextResultSchema,
   capPostsToPlatformLimit,
   claimBearingText,
 } from "./generation";
@@ -95,6 +96,16 @@ test("claimBearingText includes the cta for linkedin, so an invented claim in th
     cta: "See which placement fits your room.",
   });
   assert.equal(text, "Placement affects clearance.\nSee which placement fits your room.");
+});
+
+test("altTextResultSchema accepts real alt text", () => {
+  const result = altTextResultSchema.safeParse({ altText: "A product photo of a Touchstone Fireplug Pro electric fireplace insert." });
+  assert.equal(result.success, true);
+});
+
+test("altTextResultSchema rejects an empty altText", () => {
+  const result = altTextResultSchema.safeParse({ altText: "" });
+  assert.equal(result.success, false);
 });
 
 test("claimBearingText combines title and description for pinterest", () => {
