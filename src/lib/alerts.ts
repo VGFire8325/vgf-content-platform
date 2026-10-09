@@ -13,7 +13,7 @@ import { alerts } from "@/db/schema";
 // and from whatever fixes the condition: await resolveAlert(db, key).
 
 export type AlertRow = typeof alerts.$inferSelect;
-export type AlertSeverity = "info" | "warning" | "urgent";
+export type AlertSeverity = "info" | "normal" | "warning" | "urgent";
 type DbOrTx = typeof DbClient | Parameters<Parameters<typeof DbClient.transaction>[0]>[0];
 
 export async function openAlert(

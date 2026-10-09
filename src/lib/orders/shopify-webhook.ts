@@ -52,7 +52,10 @@ export interface ShopifyOrderPayload {
   email?: string | null;
   contact_email?: string | null;
   phone?: string | null;
+  created_at?: string | null;
   processed_at?: string | null;
+  cancelled_at?: string | null;
+  financial_status?: string | null;
   shipping_address?: ShopifyAddress | null;
   billing_address?: ShopifyAddress | null;
   customer?: { first_name?: string | null; last_name?: string | null; phone?: string | null; email?: string | null } | null;
@@ -62,6 +65,8 @@ export interface ShopifyOrderPayload {
 export interface ParsedOrder {
   shopifyOrderId: string;
   orderNumber: string;
+  createdAt: Date | null; // Shopify's created_at; null if missing/unparseable
+  financialStatus: string | null;
   customerName: string;
   shipCompany: string | null;
   shipAddress1: string | null;
@@ -97,9 +102,13 @@ export function parseOrderPayload(payload: ShopifyOrderPayload): ParsedOrder {
       ? String(payload.order_number)
       : (clean(payload.name)?.replace(/^#/, "") ?? String(payload.id));
 
+  const created = payload.created_at ? new Date(payload.created_at) : null;
+
   return {
     shopifyOrderId: String(payload.id),
     orderNumber,
+    createdAt: created && !Number.isNaN(created.getTime()) ? created : null,
+    financialStatus: clean(payload.financial_status),
     customerName,
     shipCompany: clean(ship.company),
     shipAddress1: clean(ship.address1),

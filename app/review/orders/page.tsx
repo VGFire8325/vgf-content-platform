@@ -2,14 +2,15 @@ import { desc, inArray } from "drizzle-orm";
 import { db } from "@/db/client";
 import { orderItems, orders, suppliers } from "@/db/schema";
 import { buildDraft, buildMailtoUrl, buildPortalBlock, draftSubject } from "@/lib/orders/draft";
-import { groupItemsBySupplier, isOverdueUnsent } from "@/lib/orders/status";
+import { groupItemsBySupplier, isAwaitingStockConfirmation, isOverdueUnsent } from "@/lib/orders/status";
 import type { Supplier } from "@/lib/orders/suppliers";
 import {
   assignSupplierAction,
   markSentAction,
   saveFreightAction,
+  saveManufacturerReplyAction,
   saveTrackingAction,
-  toggleConfirmedAction,
+  toggleStockConfirmedAction,
   undoSentAction,
 } from "./actions";
 import { CopyButton } from "./copy-button";
@@ -121,23 +122,36 @@ function UnmatchedItems({ order, items, supplierList }: { order: OrderRow; items
 
 function OrderCard({ order, items, supplierList, now }: { order: OrderRow; items: OrderItemRow[]; supplierList: Supplier[]; now: Date }) {
   const groups = groupItemsBySupplier(items);
-  const overdue = isOverdueUnsent(order, now);
+  const cancelled = order.cancelledAt !== null;
   return (
     <article className="item-card" id={`order-${order.orderNumber}`}>
       <header>
         <strong>#{order.orderNumber}</strong>
-        <span className={`status status-${order.status}`}>{order.status.replace("_", " ")}</span>
+        <span className={`status status-${order.status}`}>{order.status.replaceAll("_", " ")}</span>
+        <span className={`status ${order.charged ? "badge-charged" : "badge-uncharged"}`}>
+          {order.charged ? "Card charged" : "Card not charged yet"}
+        </span>
+        {order.needsApproval ? <span className="status badge-approval">Needs your approval</span> : null}
         <span>{order.customerName}</span>
-        <span className="scheduled-time">Paid {formatTime(order.paidAt)}</span>
+        <span className="scheduled-time">Placed {formatTime(order.createdAtShopify)}</span>
       </header>
-      {overdue ? <div className="flag-error">Paid more than 24 hours ago and not marked sent.</div> : null}
+      {cancelled ? (
+        <div className="flag-error">
+          Cancelled in Shopify {formatTime(order.cancelledAt)}.
+          {order.sentAt ? " The New Order email had already gone out: let the manufacturer know." : ""}
+        </div>
+      ) : null}
+      {isOverdueUnsent(order, now) ? <div className="flag-error">Placed more than 24 hours ago and the New Order email isn't marked sent.</div> : null}
+      {isAwaitingStockConfirmation(order, now) ? (
+        <div className="flag-warning">Sent more than 72 hours ago and stock isn't confirmed yet. The customer is waiting.</div>
+      ) : null}
 
       <form action={saveFreightAction} className="inline-form">
         <input type="hidden" name="orderId" value={order.id} />
         <label>
           <input type="checkbox" name="freightSeparate" defaultChecked={order.freightSeparate} /> Freight billed separately (adds a freight line to the draft)
         </label>{" "}
-        <input type="text" name="freightNote" placeholder="Freight note (e.g. quoted $395, approved)" defaultValue={order.freightNote ?? ""} />{" "}
+        <input type="text" name="freightNote" placeholder="Freight note" defaultValue={order.freightNote ?? ""} />{" "}
         <button type="submit">Save &amp; update draft</button>
       </form>
 
@@ -150,12 +164,24 @@ function OrderCard({ order, items, supplierList, now }: { order: OrderRow; items
         );
       })}
 
+      <form action={saveManufacturerReplyAction} className="reply-form">
+        <input type="hidden" name="orderId" value={order.id} />
+        <label>
+          <span>Manufacturer&apos;s reply (lead time, freight quote, substitutions)</span>
+          <textarea name="manufacturerReply" rows={3} defaultValue={order.manufacturerReply ?? ""} />
+        </label>
+        <label>
+          <input type="checkbox" name="needsApproval" defaultChecked={order.needsApproval} /> Needs my approval (e.g. a freight quote)
+        </label>{" "}
+        <button type="submit">Save reply</button>
+      </form>
+
       <div className="draft-actions">
-        <form action={toggleConfirmedAction} className="inline-form">
+        <form action={toggleStockConfirmedAction} className="inline-form">
           <input type="hidden" name="orderId" value={order.id} />
-          <input type="hidden" name="confirmed" value={order.confirmedAt ? "false" : "true"} />
-          {order.confirmedAt ? <span className="sent-note">Confirmed {formatTime(order.confirmedAt)}</span> : null}{" "}
-          <button type="submit">{order.confirmedAt ? "Undo confirmed" : "Mark Confirmed"}</button>
+          <input type="hidden" name="confirmed" value={order.stockConfirmedAt ? "false" : "true"} />
+          {order.stockConfirmedAt ? <span className="sent-note">Stock confirmed {formatTime(order.stockConfirmedAt)}</span> : null}{" "}
+          <button type="submit">{order.stockConfirmedAt ? "Undo stock confirmed" : "Mark stock confirmed"}</button>
         </form>
         <form action={saveTrackingAction} className="inline-form">
           <input type="hidden" name="orderId" value={order.id} />
@@ -168,15 +194,17 @@ function OrderCard({ order, items, supplierList, now }: { order: OrderRow; items
 }
 
 export default async function OrdersPage() {
-  const orderRows = await db.select().from(orders).orderBy(desc(orders.paidAt)).limit(ORDER_LIMIT);
+  const orderRows = await db.select().from(orders).orderBy(desc(orders.createdAtShopify)).limit(ORDER_LIMIT);
   const itemRows =
     orderRows.length > 0 ? await db.select().from(orderItems).where(inArray(orderItems.orderId, orderRows.map((o) => o.id))) : [];
   const supplierList = await db.select().from(suppliers).orderBy(suppliers.name);
   const now = new Date();
 
-  const open = orderRows.filter((o) => o.status !== "shipped");
-  const done = orderRows.filter((o) => o.status === "shipped");
+  const open = orderRows.filter((o) => o.status !== "shipped" && o.status !== "cancelled");
+  const shipped = orderRows.filter((o) => o.status === "shipped");
+  const cancelled = orderRows.filter((o) => o.status === "cancelled");
   const itemsFor = (orderId: string) => itemRows.filter((i) => i.orderId === orderId);
+  const card = (order: OrderRow) => <OrderCard key={order.id} order={order} items={itemsFor(order.id)} supplierList={supplierList} now={now} />;
 
   return (
     <main>
@@ -187,22 +215,21 @@ export default async function OrdersPage() {
         <a href="/scheduled">View Scheduled</a>
       </p>
       <p className="stub-note">
-        Drafts are never sent automatically. Open each one in your email (or copy it), send it yourself, then click Mark Sent.
+        Drafts are never sent automatically. Open each one in your email (or copy it), send it yourself, then click Mark Sent. Charge the
+        card in Shopify once the manufacturer confirms stock.
       </p>
       {open.length === 0 ? <p>No open orders.</p> : null}
-      <div className="items">
-        {open.map((order) => (
-          <OrderCard key={order.id} order={order} items={itemsFor(order.id)} supplierList={supplierList} now={now} />
-        ))}
-      </div>
-      {done.length > 0 ? (
+      <div className="items">{open.map(card)}</div>
+      {shipped.length > 0 ? (
         <details className="shipped-orders">
-          <summary>Shipped ({done.length})</summary>
-          <div className="items">
-            {done.map((order) => (
-              <OrderCard key={order.id} order={order} items={itemsFor(order.id)} supplierList={supplierList} now={now} />
-            ))}
-          </div>
+          <summary>Shipped ({shipped.length})</summary>
+          <div className="items">{shipped.map(card)}</div>
+        </details>
+      ) : null}
+      {cancelled.length > 0 ? (
+        <details className="shipped-orders">
+          <summary>Cancelled ({cancelled.length})</summary>
+          <div className="items">{cancelled.map(card)}</div>
         </details>
       ) : null}
     </main>

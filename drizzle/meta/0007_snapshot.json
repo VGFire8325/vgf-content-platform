@@ -1,5 +1,5 @@
 {
-  "id": "91f0eb9e-1762-4ad4-a766-59e922e42921",
+  "id": "229a1911-f448-4300-8529-51e65e1d0697",
   "prevId": "03693d6a-ffa4-4402-bd61-7a72317e93eb",
   "version": "7",
   "dialect": "postgresql",
@@ -837,8 +837,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "paid_at": {
-          "name": "paid_at",
+        "created_at_shopify": {
+          "name": "created_at_shopify",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
@@ -930,14 +930,52 @@
           "primaryKey": false,
           "notNull": false
         },
+        "manufacturer_reply": {
+          "name": "manufacturer_reply",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "needs_approval": {
+          "name": "needs_approval",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "sent_at": {
           "name": "sent_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
-        "confirmed_at": {
-          "name": "confirmed_at",
+        "stock_confirmed_at": {
+          "name": "stock_confirmed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "paid_at": {
+          "name": "paid_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "financial_status": {
+          "name": "financial_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "charged": {
+          "name": "charged",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "cancelled_at": {
+          "name": "cancelled_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -1478,9 +1516,11 @@
         "new",
         "draft_ready",
         "sent",
-        "confirmed",
+        "stock_confirmed",
+        "charged",
         "shipped",
-        "needs_attention"
+        "needs_attention",
+        "cancelled"
       ]
     },
     "public.platform": {

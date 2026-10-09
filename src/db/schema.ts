@@ -309,19 +309,25 @@ export const jobs = pgTable("jobs", {
 });
 
 // --- Order fulfillment (drop-ship helper, 2026-10) ---
-// Turns each paid Shopify order into a ready-to-send manufacturer email
+// Turns each new Shopify order into a ready-to-send manufacturer email
 // that Brendan reviews and sends himself — nothing here ever emails a
 // manufacturer on its own. See src/lib/orders/ and app/review/orders.
 
 export const supplierMethodEnum = pgEnum("supplier_method", ["email", "portal"]);
 
+// Normal flow: draft_ready → sent → stock_confirmed → charged → shipped.
+// Brendan emails the manufacturer when the order is PLACED, waits for the
+// reply confirming stock (often with a sales order or freight quote), and
+// only then charges the card in Shopify.
 export const orderStatusEnum = pgEnum("order_status", [
   "new",
   "draft_ready",
   "sent",
-  "confirmed",
+  "stock_confirmed",
+  "charged",
   "shipped",
   "needs_attention",
+  "cancelled",
 ]);
 
 // One row per manufacturer/distributor Brendan places orders with.
@@ -350,7 +356,9 @@ export const orders = pgTable("orders", {
   // retry must never create a second order or a second notification.
   shopifyOrderId: text("shopify_order_id").notNull().unique(),
   orderNumber: text("order_number").notNull(), // e.g. "1322" (no leading #)
-  paidAt: timestamp("paid_at", { withTimezone: true }).notNull(),
+  // When the customer placed the order in Shopify. The 24-hour "not sent"
+  // clock starts here.
+  createdAtShopify: timestamp("created_at_shopify", { withTimezone: true }).notNull(),
   customerName: text("customer_name").notNull(),
   shipCompany: text("ship_company"),
   shipAddress1: text("ship_address1"),
@@ -370,8 +378,21 @@ export const orders = pgTable("orders", {
   // to the draft when freight is billed separately.
   freightSeparate: boolean("freight_separate").notNull().default(false),
   freightNote: text("freight_note"),
+  // Free text: what the manufacturer said back (lead time, freight
+  // quote, substitutions).
+  manufacturerReply: text("manufacturer_reply"),
+  // A freight quote (or anything else in the reply) that needs Brendan's
+  // yes before the order goes ahead.
+  needsApproval: boolean("needs_approval").notNull().default(false),
   sentAt: timestamp("sent_at", { withTimezone: true }),
-  confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+  stockConfirmedAt: timestamp("stock_confirmed_at", { withTimezone: true }),
+  // Set by the orders/paid webhook once Brendan charges the card in
+  // Shopify. financial_status is Shopify's own value ("pending",
+  // "authorized", "paid", ...). No payment details are stored.
+  paidAt: timestamp("paid_at", { withTimezone: true }),
+  financialStatus: text("financial_status"),
+  charged: boolean("charged").notNull().default(false),
+  cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
   trackingNumber: text("tracking_number"),
   // The Shopify webhook body with payment fields stripped (see
   // sanitizeOrderPayload) — kept for debugging and for later agents.
@@ -404,7 +425,7 @@ export const alerts = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     key: text("key").notNull(),
-    severity: text("severity").notNull(), // "info" | "warning" | "urgent"
+    severity: text("severity").notNull(), // "info" | "normal" | "warning" | "urgent"
     message: text("message").notNull(),
     firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),

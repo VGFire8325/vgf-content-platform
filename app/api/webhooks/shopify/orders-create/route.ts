@@ -1,14 +1,13 @@
 import { db } from "@/db/client";
 import { sendNotificationEmail } from "@/lib/email";
 import { requireEnv } from "@/lib/env";
-import { processOrderPaid } from "@/lib/orders/service";
+import { processOrderCreated } from "@/lib/orders/service";
 import { handleOrderWebhook, webhookSecrets } from "@/lib/orders/webhook-handler";
 
 export const runtime = "nodejs";
 
-// Shopify orders/paid: Brendan charged the card in Shopify. Records paid_at,
-// financial_status and the charged flag (and stores the order if this
-// arrives before orders/create).
+// Shopify orders/create: the main trigger. Brendan emails the manufacturer when an order is
+// PLACED, before charging the card, so this is where the draft is made.
 //
 // Not behind the login session (Shopify can't hold one); authenticated by
 // the HMAC signature instead (see middleware.ts). Only ever emails Brendan,
@@ -16,9 +15,9 @@ export const runtime = "nodejs";
 export async function POST(request: Request) {
   const { APP_BASE_URL } = requireEnv("APP_BASE_URL");
   return handleOrderWebhook(request, {
-    topic: "orders/paid",
+    topic: "orders/create",
     secrets: webhookSecrets(),
-    process: (payload, eventAt) => processOrderPaid(db, payload, eventAt, APP_BASE_URL),
+    process: (payload, eventAt) => processOrderCreated(db, payload, eventAt, APP_BASE_URL),
     notify: sendNotificationEmail,
   });
 }

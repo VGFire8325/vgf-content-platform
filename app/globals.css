@@ -237,7 +237,15 @@ section { margin-bottom: 40px; }
 .status-draft_ready { background: #fff3cd; }
 .status-needs_attention { background: #f8d7da; }
 .status-sent { background: #d1ecf1; }
-.status-confirmed, .status-shipped { background: #d4edda; }
+.status-stock_confirmed, .status-charged, .status-shipped { background: #d4edda; }
+.status-cancelled { background: #e2e3e5; color: #555; }
+.badge-charged { background: #d4edda; }
+.badge-uncharged { background: #fff3cd; }
+.badge-approval { background: #f8d7da; }
+.reply-form { margin: 12px 0 4px; }
+.reply-form label { display: block; font-size: 13px; margin-bottom: 6px; }
+.reply-form label span { display: block; font-weight: 600; margin-bottom: 4px; }
+.reply-form textarea { width: 100%; font: inherit; font-size: 14px; padding: 6px; }
 .flag-error {
   background: #f8d7da;
   border: 1px solid #f1aeb5;

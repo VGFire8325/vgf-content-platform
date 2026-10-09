@@ -1,4 +1,4 @@
-CREATE TYPE "public"."order_status" AS ENUM('new', 'draft_ready', 'sent', 'confirmed', 'shipped', 'needs_attention');--> statement-breakpoint
+CREATE TYPE "public"."order_status" AS ENUM('new', 'draft_ready', 'sent', 'stock_confirmed', 'charged', 'shipped', 'needs_attention', 'cancelled');--> statement-breakpoint
 CREATE TYPE "public"."supplier_method" AS ENUM('email', 'portal');--> statement-breakpoint
 CREATE TABLE IF NOT EXISTS "alerts" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS "orders" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"shopify_order_id" text NOT NULL,
 	"order_number" text NOT NULL,
-	"paid_at" timestamp with time zone NOT NULL,
+	"created_at_shopify" timestamp with time zone NOT NULL,
 	"customer_name" text NOT NULL,
 	"ship_company" text,
 	"ship_address1" text,
@@ -41,8 +41,14 @@ CREATE TABLE IF NOT EXISTS "orders" (
 	"status" "order_status" DEFAULT 'new' NOT NULL,
 	"freight_separate" boolean DEFAULT false NOT NULL,
 	"freight_note" text,
+	"manufacturer_reply" text,
+	"needs_approval" boolean DEFAULT false NOT NULL,
 	"sent_at" timestamp with time zone,
-	"confirmed_at" timestamp with time zone,
+	"stock_confirmed_at" timestamp with time zone,
+	"paid_at" timestamp with time zone,
+	"financial_status" text,
+	"charged" boolean DEFAULT false NOT NULL,
+	"cancelled_at" timestamp with time zone,
 	"tracking_number" text,
 	"raw_payload" jsonb NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,

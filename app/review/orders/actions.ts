@@ -4,10 +4,11 @@ import { revalidatePath } from "next/cache";
 import { db } from "@/db/client";
 import {
   assignItemSupplier,
-  markConfirmed,
+  markStockConfirmed,
   markSupplierSent,
   markSupplierUnsent,
   setFreight,
+  setManufacturerReply,
   setTrackingNumber,
 } from "@/lib/orders/service";
 
@@ -15,14 +16,16 @@ import {
 // Brendan did — nothing here sends email to anyone.
 //
 // Hooks for later (not built yet):
-//   - Manufacturer reply parsing → call markConfirmed / setTrackingNumber
-//     from an inbound-email handler instead of these buttons.
+//   - Manufacturer reply parsing → call markStockConfirmed /
+//     setManufacturerReply / setTrackingNumber from an inbound-email
+//     handler instead of these buttons.
 //   - Pushing tracking to Shopify (fulfillmentCreate) after
 //     setTrackingNumber; needs the write_fulfillments scope.
-//   - Exceptions (freight quote needing approval, carrier can't reach the
-//     customer, item out of stock, customer cancels) → openAlert() from
-//     src/lib/alerts.ts with keys like order_freight_quote_<n>, and set
-//     status needs_attention.
+//   - Exceptions (carrier can't reach the customer, item out of stock) →
+//     openAlert() from src/lib/alerts.ts with keys like
+//     order_out_of_stock_<n>. Freight approval is the needs_approval
+//     flag below; customer cancellation arrives via the orders/cancelled
+//     webhook.
 
 const ORDERS_PATH = "/review/orders";
 
@@ -50,8 +53,19 @@ export async function undoSentAction(formData: FormData) {
   revalidatePath(ORDERS_PATH);
 }
 
-export async function toggleConfirmedAction(formData: FormData) {
-  await markConfirmed(db, requireString(formData, "orderId"), formData.get("confirmed") === "true");
+export async function toggleStockConfirmedAction(formData: FormData) {
+  await markStockConfirmed(db, requireString(formData, "orderId"), formData.get("confirmed") === "true");
+  revalidatePath(ORDERS_PATH);
+}
+
+export async function saveManufacturerReplyAction(formData: FormData) {
+  const reply = formData.get("manufacturerReply");
+  await setManufacturerReply(
+    db,
+    requireString(formData, "orderId"),
+    typeof reply === "string" ? reply : null,
+    formData.get("needsApproval") === "on",
+  );
   revalidatePath(ORDERS_PATH);
 }
 

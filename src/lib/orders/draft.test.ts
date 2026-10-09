@@ -105,3 +105,12 @@ test("mailto URL encodes subject and CRLF body and keeps the address readable", 
   const url = buildMailtoUrl("orders@modernflames.com", { subject: "New Order [#1320]", body: "Hello,\n\nLine & more" });
   assert.equal(url, "mailto:orders@modernflames.com?subject=New%20Order%20%5B%231320%5D&body=Hello%2C%0D%0A%0D%0ALine%20%26%20more");
 });
+
+test("nothing in a draft or portal block says the order is paid", () => {
+  const items = [{ quantity: 1, productName: "Landscape Pro Multi 120''", sku: "LPM-12016" }];
+  for (const s of SUPPLIER_SEED) {
+    const draft = buildDraft(ORDER, items, s);
+    assert.doesNotMatch(`${draft.subject}\n${draft.body}`, /\bpaid\b/i, s.id);
+  }
+  assert.doesNotMatch(buildPortalBlock(ORDER, items), /\bpaid\b/i);
+});

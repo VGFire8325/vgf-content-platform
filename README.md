@@ -99,33 +99,62 @@ sample PNGs (one per template) so you can look at them directly.
 
 ## Order fulfillment helper (`/review/orders`)
 
-When a Shopify order is paid, this turns it into a ready-to-send
-manufacturer email, tracks whether it went out, and emails Brendan if it
-hasn't been sent within 24 hours. **It never emails a manufacturer**:
+Brendan emails the manufacturer when an order is **placed**, before he
+charges the card. The manufacturer's reply confirms stock (often with a
+sales order or freight quote), and only then does he charge the card in
+Shopify. This helper turns each new order into a ready-to-send New Order
+email, tracks sent → stock confirmed → charged → shipped, and emails
+Brendan when something stalls. **It never emails a manufacturer**:
 Brendan opens each draft (mailto link or copy/paste), sends it himself,
 then clicks Mark Sent. No AI calls anywhere in this path.
 
+Statuses: `draft_ready` → `sent` → `stock_confirmed` → `charged` →
+`shipped` is the normal flow; `needs_attention` (a vendor matched no
+supplier) and `cancelled` are the exceptions (`new` exists only for a
+moment while an order is being stored).
+
 How it fits together:
 
-- `POST /api/webhooks/shopify/orders-paid` checks the HMAC signature
-  (`src/lib/orders/shopify-webhook.ts`), stores the order once (the
-  unique `orders.shopify_order_id` makes Shopify retries a no-op), maps
-  each line item to a supplier by the Shopify product `vendor`
-  (`suppliers.vendor_names`), and emails Brendan "Order #1234 is ready to
-  send to …" or "Order #1234 needs attention" (unmatched vendor). Add-ons
-  that don't ship (Extend protection plans, Route insurance) are skipped,
-  and an order made up only of those isn't stored at all.
-  Payment fields are stripped before the payload is stored.
-- `/review/orders` shows one draft per supplier (an order with items
-  from two suppliers gets two drafts), in Brendan's existing format.
-  Touchstone (portal) gets a copy-ready details block instead of a mailto
-  link. Freight checkbox, Mark Sent / Undo, Mark Confirmed, tracking
-  number, and "assign supplier" for unmatched vendors.
+- Three Shopify webhooks, all HMAC-verified (`src/lib/orders/shopify-webhook.ts`)
+  through one shared handler (`src/lib/orders/webhook-handler.ts`):
+  - `POST /api/webhooks/shopify/orders-create` (the main trigger) stores
+    the order, maps each line item to a supplier by the Shopify product
+    `vendor` (`suppliers.vendor_names`), and emails Brendan
+    "Order #1234 placed: ready to send to Modern Flames (card not charged yet)",
+    or "… placed: needs attention …" for an unmatched vendor.
+  - `POST /api/webhooks/shopify/orders-paid` records `paid_at`, Shopify's
+    `financial_status`, and the charged flag.
+  - `POST /api/webhooks/shopify/orders-cancelled` sets status `cancelled`,
+    resolves the order's open alerts, and emails Brendan a short note
+    saying whether the New Order email had already gone out (so he knows
+    to tell the manufacturer).
+
+  Every Shopify order webhook carries the whole order, so whichever one
+  arrives first stores it; the unique `orders.shopify_order_id` makes
+  retries and late arrivals no-ops (one row, one "placed" email). If
+  `orders/paid` arrives first, the "placed" email says "(card already
+  charged)" instead. Add-ons that don't ship (Extend protection plans,
+  Route insurance) are skipped, and an order made up only of those isn't
+  stored at all. Payment fields are stripped before the payload is stored.
+- `/review/orders` shows one draft per supplier (an order with items from
+  two suppliers gets two drafts), in Brendan's existing format, plus a
+  "Card charged / Card not charged yet" badge. Touchstone (portal) gets a
+  copy-ready details block instead of a mailto link. Controls: freight
+  checkbox, Mark Sent / Undo, Mark stock confirmed, the manufacturer's
+  reply (free text: lead time, freight quote, substitutions) with a
+  "Needs my approval" flag, tracking number, and "assign supplier" for
+  unmatched vendors.
 - `GET /api/cron/order-check` (hourly, **not scheduled yet**, see below)
-  opens an `urgent` alert keyed `order_unsent_<order number>` for any order
-  paid more than 24h ago and not sent, and emails `[URGENT] …` once per
-  alert. Marking the order sent resolves the alert. Alerts live in the
-  shared `alerts` table (`src/lib/alerts.ts`) for later agents to reuse.
+  checks two things, each with its own alert in the shared `alerts` table
+  (`src/lib/alerts.ts`) and one email per alert:
+  - **urgent** `order_unsent_<n>`: placed more than 24 hours ago (clock
+    starts at Shopify's creation time) and the New Order email isn't
+    marked sent. Email subject starts `[URGENT]`. Resolves when sent or
+    cancelled.
+  - **normal** `order_unconfirmed_<n>`: marked sent more than 72 hours
+    ago and stock not confirmed. Resolves when confirmed or cancelled.
+
+  Both thresholds are named constants in `src/lib/orders/status.ts`.
 - Suppliers are seeded by migration `0007_order_fulfillment.sql`; edit
   greeting, wording, notes and vendor names in the `suppliers` table.
 
@@ -144,35 +173,42 @@ The seed uses `ON CONFLICT DO NOTHING`, so re-running it is safe.
 | `RESEND_API_KEY` | [Resend](https://resend.com) API key (free tier: 3,000 emails/month, 100/day). |
 | `ORDER_NOTIFY_TO` | Brendan's address for notifications (comma-separate for more than one). |
 | `ORDER_NOTIFY_FROM` | Sender, e.g. `VGF Orders <orders@verygoodfireplaces.com>` (needs the domain verified in Resend), or `onboarding@resend.dev` to start (Resend only delivers that to the Resend account owner's own email). |
-| `SHOPIFY_WEBHOOK_SECRET` | The signing key shown in Shopify admin under Settings → Notifications → Webhooks (only for an admin-created webhook, the recommended path below). |
+| `SHOPIFY_WEBHOOK_SECRET` | The signing key shown in Shopify admin under Settings → Notifications → Webhooks. One key signs all three admin-created webhooks below. |
 | `SHOPIFY_CLIENT_SECRET`, `APP_BASE_URL`, `CRON_SECRET`, `DATABASE_URL` | Already set for the rest of the app; also used here. |
 
-### Registering the webhook (Brendan, in Shopify admin)
+### Registering the webhooks (Brendan, in Shopify admin)
 
 This app's Shopify credentials only have the `read_content` scope, which
-can't subscribe to order webhooks, so the simplest path is an
-admin-created webhook (no app changes):
+can't subscribe to order webhooks, so the simplest path is admin-created
+webhooks (no app changes). Create **three**, all Format **JSON** and the
+latest stable API version:
 
-1. Shopify admin → **Settings → Notifications → Webhooks** → **Create webhook**.
-2. Event: **Order payment**. Format: **JSON**. URL:
-   `https://vgf-content-platform.vercel.app/api/webhooks/shopify/orders-paid`.
-   API version: the latest stable one. Save.
-3. Copy the key shown on that page ("Your webhooks will be signed with …")
-   into Vercel as `SHOPIFY_WEBHOOK_SECRET`, then redeploy.
-4. Click **Send test notification**. Shopify sends a sample order, which
-   creates a test order on `/review/orders` and a notification email.
-   Delete it afterwards with
+| Shopify event | URL |
+|---|---|
+| **Order creation** | `https://vgf-content-platform.vercel.app/api/webhooks/shopify/orders-create` |
+| **Order payment** | `https://vgf-content-platform.vercel.app/api/webhooks/shopify/orders-paid` |
+| **Order cancellation** | `https://vgf-content-platform.vercel.app/api/webhooks/shopify/orders-cancelled` |
+
+1. Shopify admin → **Settings → Notifications → Webhooks** → **Create
+   webhook**, once per row above.
+2. The page shows one signing key for all of them ("Your webhooks will be
+   signed with …"). The same key signs all three, so set it once in
+   Vercel as `SHOPIFY_WEBHOOK_SECRET`, then redeploy.
+3. Click **Send test notification** on the Order creation webhook.
+   Shopify sends a sample order, which creates a test order on
+   `/review/orders` and a "placed" email. Delete it afterwards with
    `delete from orders where shopify_order_id = '<the test id>';`
    (its items cascade).
 
 If that Webhooks section isn't available, use the app instead: add
-`read_orders` to `scopes` and a `[[webhooks.subscriptions]]` entry
-(`topics = ["orders/paid"]`, `uri = "/api/webhooks/shopify/orders-paid"`)
-in `shopify.app.toml`, run `shopify app deploy`, then reconnect via
-`/api/oauth/shopify/start` to grant the new scope. App webhooks are
-signed with `SHOPIFY_CLIENT_SECRET`, which the route already accepts.
+`read_orders` to `scopes` and one `[[webhooks.subscriptions]]` entry per
+topic (`orders/create`, `orders/paid`, `orders/cancelled`, each with its
+`uri` from the table) in `shopify.app.toml`, run `shopify app deploy`,
+then reconnect via `/api/oauth/shopify/start` to grant the new scope. App
+webhooks are signed with `SHOPIFY_CLIENT_SECRET`, which the routes already
+accept.
 
-### Turning on the 24-hour check
+### Turning on the hourly order check
 
 Once the env vars above are set, add this to `vercel.json`'s `crons`
 (it's deliberately not there yet), alongside the existing entries:
@@ -186,11 +222,12 @@ To check it by hand first:
 
 ### Tests
 
-`npm test` runs the unit tests (signature checks, retry handling,
-supplier mapping, exact draft format, status and 24-hour rules). The
-database tests (idempotency against the real unique constraint, multi-
-supplier splitting, alert open → email once → resolve) need a throwaway
-Postgres and are skipped without one:
+`npm test` runs the unit tests (signature checks, per-route topic
+handling, retry handling, supplier mapping, exact draft format, status
+flow, 24h/72h rules). The database tests (idempotency against the real
+unique constraint, create/paid in either order, cancellation resolving
+alerts, multi-supplier splitting, both alerts opening, emailing once, and
+resolving) need a throwaway Postgres and are skipped without one:
 
 ```bash
 apt-get install -y postgresql && service postgresql start
@@ -204,10 +241,11 @@ order tables between tests. Never point it at the Supabase database.
 
 ### Not built yet (hooks left in place)
 
-Confirmation and tracking from the manufacturer's reply, pushing tracking
-to Shopify, and exceptions (freight quote needing approval, carrier can't
-reach the customer, out of stock, customer cancels). Only the manual
-buttons exist today. See the comment at the top of
+Reading stock confirmation and tracking from the manufacturer's reply
+automatically, pushing tracking to Shopify, and the remaining exceptions
+(carrier can't reach the customer, out of stock). Today these are the
+manual buttons and the free-text reply field; cancellations already
+arrive by webhook. See the comment at the top of
 `app/review/orders/actions.ts` for where each one plugs in.
 
 ## Stack
