@@ -211,6 +211,8 @@ export default async function ReviewPage() {
       <main>
         <h1>Review Queue</h1>
         <p>
+          <a href="/review/orders">Orders</a>
+          {" · "}
           <a href="/scheduled">View Scheduled</a>
           {" · "}
           <a href="/assets">Asset Library</a>
@@ -226,6 +228,8 @@ export default async function ReviewPage() {
     <main>
       <h1>Review Queue</h1>
       <p>
+        <a href="/review/orders">Orders</a>
+        {" · "}
         <a href="/scheduled">View Scheduled</a>
         {" · "}
         <a href="/assets">Asset Library</a>
