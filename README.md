@@ -129,6 +129,14 @@ How it fits together:
 - Suppliers are seeded by migration `0007_order_fulfillment.sql`; edit
   greeting, wording, notes and vendor names in the `suppliers` table.
 
+### Applying the migration
+
+Run `drizzle/0007_order_fulfillment.sql` against Supabase (SQL editor,
+or `psql "$DATABASE_URL_DIRECT" -f drizzle/0007_order_fulfillment.sql`).
+`npm run db:push` alone creates the tables but **not** the supplier seed
+rows or row-level security, since those are hand-written SQL in that file.
+The seed uses `ON CONFLICT DO NOTHING`, so re-running it is safe.
+
 ### Environment variables (Vercel)
 
 | Variable | What |
