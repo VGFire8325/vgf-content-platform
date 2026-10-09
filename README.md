@@ -97,6 +97,111 @@ To check the image templates without any of the above:
 `npx tsx scripts/render-sample.ts` — no DB, no credentials, writes two
 sample PNGs (one per template) so you can look at them directly.
 
+## Order fulfillment helper (`/review/orders`)
+
+When a Shopify order is paid, this turns it into a ready-to-send
+manufacturer email, tracks whether it went out, and emails Brendan if it
+hasn't been sent within 24 hours. **It never emails a manufacturer**:
+Brendan opens each draft (mailto link or copy/paste), sends it himself,
+then clicks Mark Sent. No AI calls anywhere in this path.
+
+How it fits together:
+
+- `POST /api/webhooks/shopify/orders-paid` checks the HMAC signature
+  (`src/lib/orders/shopify-webhook.ts`), stores the order once (the
+  unique `orders.shopify_order_id` makes Shopify retries a no-op), maps
+  each line item to a supplier by the Shopify product `vendor`
+  (`suppliers.vendor_names`), and emails Brendan "Order #1234 is ready to
+  send to …" or "Order #1234 needs attention" (unmatched vendor). Add-ons
+  that don't ship (Extend protection plans, Route insurance) are skipped,
+  and an order made up only of those isn't stored at all.
+  Payment fields are stripped before the payload is stored.
+- `/review/orders` shows one draft per supplier (an order with items
+  from two suppliers gets two drafts), in Brendan's existing format.
+  Touchstone (portal) gets a copy-ready details block instead of a mailto
+  link. Freight checkbox, Mark Sent / Undo, Mark Confirmed, tracking
+  number, and "assign supplier" for unmatched vendors.
+- `GET /api/cron/order-check` (hourly, **not scheduled yet**, see below)
+  opens an `urgent` alert keyed `order_unsent_<order number>` for any order
+  paid more than 24h ago and not sent, and emails `[URGENT] …` once per
+  alert. Marking the order sent resolves the alert. Alerts live in the
+  shared `alerts` table (`src/lib/alerts.ts`) for later agents to reuse.
+- Suppliers are seeded by migration `0007_order_fulfillment.sql`; edit
+  greeting, wording, notes and vendor names in the `suppliers` table.
+
+### Environment variables (Vercel)
+
+| Variable | What |
+|---|---|
+| `RESEND_API_KEY` | [Resend](https://resend.com) API key (free tier: 3,000 emails/month, 100/day). |
+| `ORDER_NOTIFY_TO` | Brendan's address for notifications (comma-separate for more than one). |
+| `ORDER_NOTIFY_FROM` | Sender, e.g. `VGF Orders <orders@verygoodfireplaces.com>` (needs the domain verified in Resend), or `onboarding@resend.dev` to start (Resend only delivers that to the Resend account owner's own email). |
+| `SHOPIFY_WEBHOOK_SECRET` | The signing key shown in Shopify admin under Settings → Notifications → Webhooks (only for an admin-created webhook, the recommended path below). |
+| `SHOPIFY_CLIENT_SECRET`, `APP_BASE_URL`, `CRON_SECRET`, `DATABASE_URL` | Already set for the rest of the app; also used here. |
+
+### Registering the webhook (Brendan, in Shopify admin)
+
+This app's Shopify credentials only have the `read_content` scope, which
+can't subscribe to order webhooks, so the simplest path is an
+admin-created webhook (no app changes):
+
+1. Shopify admin → **Settings → Notifications → Webhooks** → **Create webhook**.
+2. Event: **Order payment**. Format: **JSON**. URL:
+   `https://vgf-content-platform.vercel.app/api/webhooks/shopify/orders-paid`.
+   API version: the latest stable one. Save.
+3. Copy the key shown on that page ("Your webhooks will be signed with …")
+   into Vercel as `SHOPIFY_WEBHOOK_SECRET`, then redeploy.
+4. Click **Send test notification**. Shopify sends a sample order, which
+   creates a test order on `/review/orders` and a notification email.
+   Delete it afterwards with
+   `delete from orders where shopify_order_id = '<the test id>';`
+   (its items cascade).
+
+If that Webhooks section isn't available, use the app instead: add
+`read_orders` to `scopes` and a `[[webhooks.subscriptions]]` entry
+(`topics = ["orders/paid"]`, `uri = "/api/webhooks/shopify/orders-paid"`)
+in `shopify.app.toml`, run `shopify app deploy`, then reconnect via
+`/api/oauth/shopify/start` to grant the new scope. App webhooks are
+signed with `SHOPIFY_CLIENT_SECRET`, which the route already accepts.
+
+### Turning on the 24-hour check
+
+Once the env vars above are set, add this to `vercel.json`'s `crons`
+(it's deliberately not there yet), alongside the existing entries:
+
+```json
+{ "path": "/api/cron/order-check", "schedule": "0 * * * *" }
+```
+
+To check it by hand first:
+`curl -H "Authorization: Bearer $CRON_SECRET" https://vgf-content-platform.vercel.app/api/cron/order-check`.
+
+### Tests
+
+`npm test` runs the unit tests (signature checks, retry handling,
+supplier mapping, exact draft format, status and 24-hour rules). The
+database tests (idempotency against the real unique constraint, multi-
+supplier splitting, alert open → email once → resolve) need a throwaway
+Postgres and are skipped without one:
+
+```bash
+apt-get install -y postgresql && service postgresql start
+su postgres -c "psql -c \"ALTER USER postgres PASSWORD 'postgres';\""
+su postgres -c "createdb vgf_orders_test"
+ORDERS_TEST_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/vgf_orders_test" npm test
+```
+
+The test applies the real `drizzle/` migrations itself and truncates the
+order tables between tests. Never point it at the Supabase database.
+
+### Not built yet (hooks left in place)
+
+Confirmation and tracking from the manufacturer's reply, pushing tracking
+to Shopify, and exceptions (freight quote needing approval, carrier can't
+reach the customer, out of stock, customer cancels). Only the manual
+buttons exist today. See the comment at the top of
+`app/review/orders/actions.ts` for where each one plugs in.
+
 ## Stack
 
 Next.js (App Router) + Drizzle ORM + Supabase Postgres, per §3 of the plan.

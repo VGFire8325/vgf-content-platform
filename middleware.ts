@@ -7,9 +7,10 @@ const PUBLIC_PATHS = ["/login", "/auth/callback"];
 // Cron endpoints authenticate themselves (Vercel Cron's CRON_SECRET
 // bearer token) — they're not gated behind a user session, and never
 // will be, since Vercel's scheduler can't hold a Brendan-logged-in
-// browser cookie.
+// browser cookie. Shopify webhooks are the same story: they authenticate
+// by HMAC signature (src/lib/orders/shopify-webhook.ts), not a session.
 function isPublicPath(pathname: string): boolean {
-  return PUBLIC_PATHS.includes(pathname) || pathname.startsWith("/api/cron/");
+  return PUBLIC_PATHS.includes(pathname) || pathname.startsWith("/api/cron/") || pathname.startsWith("/api/webhooks/shopify/");
 }
 
 export async function middleware(request: NextRequest) {
