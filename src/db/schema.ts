@@ -6,7 +6,10 @@ import {
   timestamp,
   integer,
   jsonb,
+  boolean,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 // Enums — see docs/PHASE_0_PLAN.md §4 for the schema this implements.
 
@@ -304,3 +307,130 @@ export const jobs = pgTable("jobs", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// --- Order fulfillment (drop-ship helper, 2026-10) ---
+// Turns each new Shopify order into a ready-to-send manufacturer email
+// that Brendan reviews and sends himself — nothing here ever emails a
+// manufacturer on its own. See src/lib/orders/ and app/review/orders.
+
+export const supplierMethodEnum = pgEnum("supplier_method", ["email", "portal"]);
+
+// Normal flow: draft_ready → sent → stock_confirmed → charged → shipped.
+// Brendan emails the manufacturer when the order is PLACED, waits for the
+// reply confirming stock (often with a sales order or freight quote), and
+// only then charges the card in Shopify.
+export const orderStatusEnum = pgEnum("order_status", [
+  "new",
+  "draft_ready",
+  "sent",
+  "stock_confirmed",
+  "charged",
+  "shipped",
+  "needs_attention",
+  "cancelled",
+]);
+
+// One row per manufacturer/distributor Brendan places orders with.
+// Slug primary key (e.g. "sustainable_hearth") rather than a uuid so the
+// seed is deterministic and rows are readable in SQL.
+export const suppliers = pgTable("suppliers", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  // Null for portal suppliers (Touchstone) — there's no address to email.
+  orderEmail: text("order_email"),
+  method: supplierMethodEnum("method").notNull().default("email"),
+  // Shopify product `vendor` values that route to this supplier, matched
+  // case-insensitively (see matchSupplier in src/lib/orders/suppliers.ts).
+  vendorNames: text("vendor_names").array().notNull().default([]),
+  // First line of the draft ("Hello," / "Hi Holly,").
+  greeting: text("greeting").notNull().default("Hello,"),
+  // Extra wording placed between the item list and "Shipping to:" — e.g.
+  // Sustainable Hearth wants shipping included on the invoice.
+  draftInstructions: text("draft_instructions"),
+  notes: text("notes"),
+});
+
+export const orders = pgTable("orders", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  // The webhook's idempotency key — Shopify retries deliveries, and a
+  // retry must never create a second order or a second notification.
+  shopifyOrderId: text("shopify_order_id").notNull().unique(),
+  orderNumber: text("order_number").notNull(), // e.g. "1322" (no leading #)
+  // When the customer placed the order in Shopify. The 24-hour "not sent"
+  // clock starts here.
+  createdAtShopify: timestamp("created_at_shopify", { withTimezone: true }).notNull(),
+  customerName: text("customer_name").notNull(),
+  shipCompany: text("ship_company"),
+  shipAddress1: text("ship_address1"),
+  shipAddress2: text("ship_address2"),
+  shipCity: text("ship_city"),
+  shipProvince: text("ship_province"), // state/province code, e.g. "TX"
+  shipZip: text("ship_zip"),
+  shipCountry: text("ship_country"),
+  phone: text("phone"),
+  email: text("email"),
+  // The single supplier for this order; null when its items span more
+  // than one supplier (one draft per supplier, see order_items.supplier_id)
+  // or when a vendor didn't match any supplier.
+  supplierId: text("supplier_id").references(() => suppliers.id),
+  status: orderStatusEnum("status").notNull().default("new"),
+  // Brendan's checkbox: adds "(1) Freight for shipping to zip code ..."
+  // to the draft when freight is billed separately.
+  freightSeparate: boolean("freight_separate").notNull().default(false),
+  freightNote: text("freight_note"),
+  // Free text: what the manufacturer said back (lead time, freight
+  // quote, substitutions).
+  manufacturerReply: text("manufacturer_reply"),
+  // A freight quote (or anything else in the reply) that needs Brendan's
+  // yes before the order goes ahead.
+  needsApproval: boolean("needs_approval").notNull().default(false),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+  stockConfirmedAt: timestamp("stock_confirmed_at", { withTimezone: true }),
+  // Set by the orders/paid webhook once Brendan charges the card in
+  // Shopify. financial_status is Shopify's own value ("pending",
+  // "authorized", "paid", ...). No payment details are stored.
+  paidAt: timestamp("paid_at", { withTimezone: true }),
+  financialStatus: text("financial_status"),
+  charged: boolean("charged").notNull().default(false),
+  cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+  trackingNumber: text("tracking_number"),
+  // The Shopify webhook body with payment fields stripped (see
+  // sanitizeOrderPayload) — kept for debugging and for later agents.
+  rawPayload: jsonb("raw_payload").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const orderItems = pgTable("order_items", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orderId: uuid("order_id")
+    .notNull()
+    .references(() => orders.id, { onDelete: "cascade" }),
+  sku: text("sku"),
+  productName: text("product_name").notNull(),
+  quantity: integer("quantity").notNull(),
+  vendor: text("vendor"),
+  // Null = the vendor didn't match any supplier (order is needs_attention
+  // until Brendan assigns one on the orders page).
+  supplierId: text("supplier_id").references(() => suppliers.id),
+  // Per-supplier "sent" — an order spanning two suppliers is two emails,
+  // and the order only counts as sent once every item's draft has gone.
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+});
+
+// Shared alerting plumbing (meant for reuse by later agents): at most one
+// OPEN row per key, enforced by the partial unique index below. Reopening
+// after a resolve creates a new row, so history is preserved.
+export const alerts = pgTable(
+  "alerts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    key: text("key").notNull(),
+    severity: text("severity").notNull(), // "info" | "normal" | "warning" | "urgent"
+    message: text("message").notNull(),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    emailedAt: timestamp("emailed_at", { withTimezone: true }),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (table) => [uniqueIndex("alerts_open_key_unique").on(table.key).where(sql`${table.resolvedAt} is null`)],
+);

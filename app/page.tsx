@@ -7,6 +7,8 @@ export default function Home() {
       <p>
         <a href="/review">Go to Review Queue</a>
         {" · "}
+        <a href="/review/orders">Orders</a>
+        {" · "}
         <a href="/scheduled">View Scheduled</a>
         {" · "}
         <a href="/assets">Asset Library</a>

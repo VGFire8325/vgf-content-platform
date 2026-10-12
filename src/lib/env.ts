@@ -30,6 +30,12 @@ const envSchema = z.object({
   META_APP_SECRET: z.string().min(1),
   LINKEDIN_CLIENT_ID: z.string().min(1),
   LINKEDIN_CLIENT_SECRET: z.string().min(1),
+  // Order fulfillment helper (src/lib/orders, src/lib/email.ts).
+  // Resend's transactional email API (free tier: 3,000/month) — used only
+  // to email Brendan, never a manufacturer.
+  RESEND_API_KEY: z.string().min(1),
+  ORDER_NOTIFY_TO: z.string().min(1), // Brendan's address
+  ORDER_NOTIFY_FROM: z.string().min(1), // e.g. "VGF Orders <orders@verygoodfireplaces.com>"
 });
 
 type Env = z.infer<typeof envSchema>;
