@@ -6,3 +6,7 @@ Working files for tagging asset_library images (PR #2). Thumbnails/sheets live o
 - `groups.json`: idx -> representative idx of visually identical pictures (dHash); copies inherit tags.
 - `progress.json`: `pass1` setting per representative idx, `pass2` detail tags per representative idx, `notes`.
 - `bin/`: scripts. Rebuild thumbs with `python3 -I bin/fetch.py 400 <dir>`; sheets with `bin/sheet.py r<page>`.
+- `final.json`: every inventory row with its final tags (built by `bin/finalize.py`).
+- `skipped.json`: images not inserted (diagrams, logos, AI-looking, non-electric, irrelevant) and why.
+- DB state: the 108 pre-existing rows are already tagged (shopify_image_id set). New rows are built by
+  `bin/payload.py insert [start] [n]` and inserted with ON CONFLICT (shopify_image_id) DO NOTHING.
