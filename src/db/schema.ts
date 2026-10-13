@@ -352,9 +352,11 @@ export const jobs = pgTable("jobs", {
 });
 
 // --- Order fulfillment (drop-ship helper, 2026-10) ---
-// Turns each new Shopify order into a ready-to-send manufacturer email
-// that Brendan reviews and sends himself — nothing here ever emails a
-// manufacturer on its own. See src/lib/orders/ and app/review/orders.
+// Turns each new Shopify order into a manufacturer order email. Since
+// migration 0009 that email is sent automatically (src/lib/orders/
+// supplier-email.ts), but only to a real supplier when
+// SUPPLIER_EMAIL_MODE=live; otherwise it goes to Brendan only. See
+// src/lib/orders/ and app/review/orders.
 
 export const supplierMethodEnum = pgEnum("supplier_method", ["email", "portal"]);
 
@@ -391,6 +393,12 @@ export const suppliers = pgTable("suppliers", {
   // Sustainable Hearth wants shipping included on the invoice.
   draftInstructions: text("draft_instructions"),
   notes: text("notes"),
+  // False = no longer a supplier (Evolution Fires). Never emailed; a
+  // vendor that matches it is treated as unmatched.
+  active: boolean("active").notNull().default(true),
+  // False until the first supplier email to this address goes out live
+  // (Litedeer), so Brendan's alert can say it's the first order there.
+  orderedBefore: boolean("ordered_before").notNull().default(true),
 });
 
 export const orders = pgTable("orders", {
@@ -441,6 +449,11 @@ export const orders = pgTable("orders", {
   // sanitizeOrderPayload) — kept for debugging and for later agents.
   rawPayload: jsonb("raw_payload").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  // True only for orders stored after automatic supplier emails existed
+  // (migration 0009 defaults every older order to false), so turning the
+  // feature on can never email a supplier about an order Brendan already
+  // handled by hand.
+  autoSupplierEmail: boolean("auto_supplier_email").notNull().default(false),
 });
 
 export const orderItems = pgTable("order_items", {
@@ -459,6 +472,42 @@ export const orderItems = pgTable("order_items", {
   // and the order only counts as sent once every item's draft has gone.
   sentAt: timestamp("sent_at", { withTimezone: true }),
 });
+
+// One row per (order, supplier) automatic email. Inserting the row is the
+// atomic claim that stops a second send (Shopify retries, duplicate or
+// concurrent deliveries, the hourly safety net): see claimSupplierEmail in
+// src/lib/orders/service.ts. Also the log of what went out, for Brendan
+// and the weekly status agent.
+export const supplierEmails = pgTable(
+  "supplier_emails",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orderId: uuid("order_id")
+      .notNull()
+      .references(() => orders.id, { onDelete: "cascade" }),
+    supplierId: text("supplier_id")
+      .notNull()
+      .references(() => suppliers.id),
+    // "test": sent to ORDER_NOTIFY_TO only. "live": sent to the supplier.
+    mode: text("mode").notNull(),
+    // "sending" (claimed), "sent", or "failed" (claim released for a retry).
+    status: text("status").notNull(),
+    supplierAddress: text("supplier_address").notNull(), // suppliers.order_email at send time
+    toAddresses: text("to_addresses").array(), // where it actually went
+    subject: text("subject").notNull(),
+    resendMessageId: text("resend_message_id"),
+    error: text("error"),
+    attempts: integer("attempts").notNull().default(1),
+    firstClaimedAt: timestamp("first_claimed_at", { withTimezone: true }).notNull().defaultNow(),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }).notNull().defaultNow(),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("supplier_emails_order_supplier_unique").on(table.orderId, table.supplierId),
+    check("supplier_emails_mode_check", sql`${table.mode} in ('test', 'live')`),
+    check("supplier_emails_status_check", sql`${table.status} in ('sending', 'sent', 'failed')`),
+  ],
+);
 
 // Shared alerting plumbing (meant for reuse by later agents): at most one
 // OPEN row per key, enforced by the partial unique index below. Reopening

@@ -99,14 +99,17 @@ sample PNGs (one per template) so you can look at them directly.
 
 ## Order fulfillment helper (`/review/orders`)
 
-Brendan emails the manufacturer when an order is **placed**, before he
-charges the card. The manufacturer's reply confirms stock (often with a
-sales order or freight quote), and only then does he charge the card in
-Shopify. This helper turns each new order into a ready-to-send New Order
-email, tracks sent → stock confirmed → charged → shipped, and emails
-Brendan when something stalls. **It never emails a manufacturer**:
-Brendan opens each draft (mailto link or copy/paste), sends it himself,
-then clicks Mark Sent. No AI calls anywhere in this path.
+The manufacturer is emailed when an order is **placed**, before the card
+is charged (it's only authorized at that point). The manufacturer's
+reply goes to Brendan and confirms stock (often with a sales order or
+freight quote), and only then does he charge the card in Shopify, or
+email the customer about a backorder. This helper emails each supplier
+automatically from the Very Good Fireplaces address (see "Automatic
+supplier emails" below; **test mode by default**, which sends everything
+to Brendan only), tracks sent → stock confirmed → charged → shipped, and
+emails Brendan when something stalls. It never charges, refunds or
+cancels anything and never emails a customer. No AI calls anywhere in
+this path.
 
 Statuses: `draft_ready` → `sent` → `stock_confirmed` → `charged` →
 `shipped` is the normal flow; `needs_attention` (a vendor matched no
@@ -118,10 +121,13 @@ How it fits together:
 - Three Shopify webhooks, all HMAC-verified (`src/lib/orders/shopify-webhook.ts`)
   through one shared handler (`src/lib/orders/webhook-handler.ts`):
   - `POST /api/webhooks/shopify/orders-create` (the main trigger) stores
-    the order, maps each line item to a supplier by the Shopify product
-    `vendor` (`suppliers.vendor_names`), and emails Brendan
-    "Order #1234 placed: ready to send to Modern Flames (card not charged yet)",
-    or "… placed: needs attention …" for an unmatched vendor.
+    the order, maps each line item to an active supplier by the Shopify
+    product `vendor` (`suppliers.vendor_names`, case-insensitive), sends
+    one email per supplier, and emails Brendan what happened, e.g.
+    "Order #1234 placed: emailed to Modern Flames (card not charged yet)",
+    "… placed: TEST supplier email for Modern Flames sent to you only …",
+    or "… placed: needs attention …" (portal supplier, unmatched vendor,
+    or a failed send).
   - `POST /api/webhooks/shopify/orders-paid` records `paid_at`, Shopify's
     `financial_status`, and the charged flag.
   - `POST /api/webhooks/shopify/orders-cancelled` sets status `cancelled`,
@@ -158,6 +164,68 @@ How it fits together:
 - Suppliers are seeded by migration `0007_order_fulfillment.sql`; edit
   greeting, wording, notes and vendor names in the `suppliers` table.
 
+### Automatic supplier emails
+
+`src/lib/orders/supplier-email.ts` (who gets what, and the email text),
+`dispatchSupplierEmails` in `src/lib/orders/service.ts` (claim, send,
+record), and `sendSupplierEmail` in `src/lib/email.ts` (the Resend call,
+a separate code path from `sendNotificationEmail`, which still only
+emails Brendan from `ORDER_NOTIFY_FROM`).
+
+- **One email per supplier** per order, plain text: the supplier's
+  greeting, the items (name, SKU, quantity), the ship-to block (name,
+  company, address, phone, the customer's email for the carrier), the
+  Shopify order number as our PO, the asks (confirm stock, lead time if
+  not, freight quote and tracking), then `suppliers.draft_instructions`
+  if any (Sustainable Hearth's shipping-on-invoice line). No prices, no
+  payment details. From `SUPPLIER_EMAIL_FROM`, Reply-To
+  `SUPPLIER_EMAIL_REPLY_TO`, BCC `SUPPLIER_EMAIL_BCC`.
+- **Test mode** (`SUPPLIER_EMAIL_MODE` unset or anything but `live`):
+  every supplier email goes to `ORDER_NOTIFY_TO` only, subject prefixed
+  `[TEST - would go to <supplier address>]`, no BCC. The supplier is not
+  told, so the order is **not** marked sent: Brendan still sends it by
+  hand from `/review/orders` as before.
+- **Live mode** (`SUPPLIER_EMAIL_MODE=live`): to the supplier's
+  `order_email` only. A successful send marks that supplier's items sent;
+  the order becomes `sent` once every item is.
+- **Never sent twice.** Inserting the `(order, supplier)` row in
+  `supplier_emails` is an atomic claim (unique index), so Shopify retries,
+  duplicate or concurrent deliveries, and the hourly check can't send a
+  second copy. A send Resend definitely rejected is released for a retry
+  (up to 5 attempts) and alerted; an uncertain one (network error, 5xx)
+  is retried after 10 minutes with the same Resend `Idempotency-Key`,
+  only within 23 hours, so Resend drops a duplicate.
+- **Not emailed, alert to Brendan instead** (`alerts` table +
+  his email): Touchstone (`method = 'portal'`: "Place order #N in the
+  Touchstone dealer portal"), a vendor matching no supplier ("Unmatched
+  vendor X on order #N"), and a vendor matching an inactive supplier
+  (Evolution Fires, `suppliers.active = false`), treated as unmatched.
+  These still need Brendan's Mark Sent; the alert resolves once every
+  item is sent or the order is cancelled.
+- **Litedeer** (`suppliers.ordered_before = false`) is emailed normally;
+  Brendan's email adds "This is the first order to …". Modern Flames has
+  no special handling.
+- **Only new orders.** Migration 0009 sets `orders.auto_supplier_email =
+  false` on every existing order, so turning this on can't email a
+  supplier about an order Brendan already handled. Cancelled orders are
+  never emailed. Test-mode emails are recorded too, so switching to live
+  never re-sends an order that was already test-emailed.
+- `supplier_emails` is the log: mode, recipients, subject, Resend
+  message id, sent time, error, attempts.
+
+#### Going live (Brendan)
+
+1. Apply `drizzle/0009_supplier_email.sql` (below) and add the Vercel
+   env vars in the table below, with `SUPPLIER_EMAIL_MODE=test`.
+   Redeploy.
+2. Place a test order (or Shopify's **Send test notification** on the
+   Order creation webhook). Check that the one test email reaches you,
+   reads right, and nothing else was sent: `select * from
+   supplier_emails order by first_claimed_at desc;`.
+3. When happy, set `SUPPLIER_EMAIL_MODE=live` in Vercel (Production) and
+   redeploy. To stop at any time, set it back to `test` (or delete it)
+   and redeploy.
+
 ### Applying the migration
 
 Run `drizzle/0007_order_fulfillment.sql` against Supabase (SQL editor,
@@ -172,6 +240,14 @@ it again: its two `CREATE TYPE` statements aren't `IF NOT EXISTS` and
 would fail. See "Database migrations" below for how applied migrations
 are tracked.
 
+`drizzle/0009_supplier_email.sql` (automatic supplier emails) is
+additive and re-runnable: the `supplier_emails` table (RLS on),
+`orders.auto_supplier_email` (false for every existing order),
+`suppliers.active` (Evolution Fires set false) and
+`suppliers.ordered_before` (Litedeer set false). **Not applied to
+production yet**; it must be applied before the code that uses it is
+deployed.
+
 ### Environment variables (Vercel)
 
 | Variable | What |
@@ -179,6 +255,10 @@ are tracked.
 | `RESEND_API_KEY` | [Resend](https://resend.com) API key (free tier: 3,000 emails/month, 100/day). |
 | `ORDER_NOTIFY_TO` | Brendan's address for notifications (comma-separate for more than one). |
 | `ORDER_NOTIFY_FROM` | Sender, e.g. `VGF Orders <orders@verygoodfireplaces.com>` (needs the domain verified in Resend), or `onboarding@resend.dev` to start (Resend only delivers that to the Resend account owner's own email). |
+| `SUPPLIER_EMAIL_FROM` | Sender for supplier order emails: `Very Good Fireplaces <orders@verygoodfireplaces.com>` (domain verified in Resend). |
+| `SUPPLIER_EMAIL_REPLY_TO` | Where suppliers' replies go: `Brendan@verygoodfireplaces.com`. |
+| `SUPPLIER_EMAIL_BCC` | Copy of every live supplier email: `Brendan@verygoodfireplaces.com`. Optional. |
+| `SUPPLIER_EMAIL_MODE` | `test` (default if unset: every supplier email goes to `ORDER_NOTIFY_TO` only) or `live` (real suppliers). |
 | `SHOPIFY_WEBHOOK_SECRET` | The signing key shown in Shopify admin under Settings → Notifications → Webhooks. One key signs all three admin-created webhooks below. |
 | `SHOPIFY_CLIENT_SECRET`, `APP_BASE_URL`, `CRON_SECRET`, `DATABASE_URL` | Already set for the rest of the app; also used here. |
 
@@ -226,14 +306,25 @@ Once the env vars above are set, add this to `vercel.json`'s `crons`
 To check it by hand first:
 `curl -H "Authorization: Bearer $CRON_SECRET" https://vgf-content-platform.vercel.app/api/cron/order-check`.
 
+It is also the safety net for automatic supplier emails: it re-dispatches
+orders from the last 23 hours whose supplier email didn't finish (the
+webhook request died, or Resend failed), through the same idempotent
+claim, so it can never send a second copy. The webhook doesn't depend on
+it: Shopify retries a failed delivery, and each retry re-runs the same
+dispatch.
+
 ### Tests
 
 `npm test` runs the unit tests (signature checks, per-route topic
 handling, retry handling, supplier mapping, exact draft format, status
-flow, 24h/72h rules). The database tests (idempotency against the real
-unique constraint, create/paid in either order, cancellation resolving
-alerts, multi-supplier splitting, both alerts opening, emailing once, and
-resolving) need a throwaway Postgres and are skipped without one:
+flow, 24h/72h rules, supplier email grouping, content, test-mode
+redirect and recipient guards). The database tests (idempotency against
+the real unique constraint, create/paid in either order, cancellation
+resolving alerts, multi-supplier splitting, both alerts opening,
+emailing once, and resolving; and for supplier emails: exactly one send
+across webhook retries and concurrent deliveries, failed and uncertain
+sends, test mode, portal / unmatched / inactive / first-order paths)
+need a throwaway Postgres and are skipped without one:
 
 ```bash
 apt-get install -y postgresql && service postgresql start

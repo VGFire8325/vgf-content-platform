@@ -8,7 +8,12 @@ export interface OrderWebhookDeps {
   secrets: string[];
   // Does the DB work; returns the JSON for Shopify and at most one email
   // for Brendan (e.g. processOrderCreated in ./service).
-  process: (payload: ShopifyOrderPayload, eventAt: Date) => Promise<{ body: Record<string, unknown>; email: NotificationEmail | null }>;
+  // onNotified (optional) runs after that email is sent, e.g. to mark the
+  // alerts it reported as emailed.
+  process: (
+    payload: ShopifyOrderPayload,
+    eventAt: Date,
+  ) => Promise<{ body: Record<string, unknown>; email: NotificationEmail | null; onNotified?: () => Promise<void> }>;
   notify: (email: NotificationEmail) => Promise<void>;
   now?: () => Date;
 }
@@ -53,12 +58,13 @@ export async function handleOrderWebhook(request: Request, deps: OrderWebhookDep
   const parsedTime = triggeredAt ? new Date(triggeredAt) : null;
   const eventAt = parsedTime && !Number.isNaN(parsedTime.getTime()) ? parsedTime : (deps.now?.() ?? new Date());
 
-  const { body, email } = await deps.process(payload, eventAt);
+  const { body, email, onNotified } = await deps.process(payload, eventAt);
 
   if (email) {
     try {
       await deps.notify(email);
       body.notified = true;
+      await onNotified?.();
     } catch (err) {
       body.notified = false;
       console.error(`${deps.topic} webhook: notification email failed (${email.subject}):`, err);

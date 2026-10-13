@@ -1,7 +1,11 @@
 // Database-backed tests for the order-fulfillment helper: webhook
 // idempotency against the real unique constraint, create/paid/cancelled
-// in any arrival order, supplier routing, and both order alerts (24h
-// unsent, 72h stock confirmation) opening, emailing once, and resolving.
+// in any arrival order, supplier routing, automatic supplier emails (sent
+// exactly once across retries and concurrent deliveries, test mode, and
+// the portal / unmatched / inactive / first-order paths), and both order
+// alerts (24h unsent, 72h stock confirmation) opening, emailing once, and
+// resolving. No real email is sent: the supplier mailer is a fake that
+// records what the real one would have sent where.
 //
 // Needs a throwaway Postgres; skipped unless ORDERS_TEST_DATABASE_URL is
 // set (the rest of `npm test` stays credential-free). The database is
@@ -24,6 +28,7 @@ describe("order fulfillment (database)", { skip: TEST_DB ? false : "set ORDERS_T
     service: typeof import("./service");
     alerts: typeof import("@/lib/alerts");
     handler: typeof import("./webhook-handler");
+    email: typeof import("@/lib/email");
     sql: typeof import("drizzle-orm").sql;
   };
 
@@ -44,6 +49,7 @@ describe("order fulfillment (database)", { skip: TEST_DB ? false : "set ORDERS_T
       service: await import("./service"),
       alerts: await import("@/lib/alerts"),
       handler: await import("./webhook-handler"),
+      email: await import("@/lib/email"),
       sql,
     };
   });
@@ -53,7 +59,9 @@ describe("order fulfillment (database)", { skip: TEST_DB ? false : "set ORDERS_T
   });
 
   beforeEach(async () => {
-    await mod.db.execute(mod.sql`truncate table order_items, orders, alerts`);
+    await mod.db.execute(mod.sql`truncate table supplier_emails, order_items, orders, alerts`);
+    await mod.db.execute(mod.sql`update suppliers set ordered_before = (id <> 'litedeer')`);
+    mail = fakeMailer("test");
   });
 
   const CREATED = new Date("2026-11-27T15:00:00Z");
@@ -81,9 +89,44 @@ describe("order fulfillment (database)", { skip: TEST_DB ? false : "set ORDERS_T
     };
   }
 
+  // Records every supplier email instead of sending it, computing the
+  // recipients with the real buildSupplierEmailBody so test-mode redirects
+  // are exercised. fail(...) makes the next send throw that error.
+  type Sent = { supplierId: string; to: string[]; subject: string; text: string; key: string };
+  function fakeMailer(mode: "test" | "live") {
+    const sent: Sent[] = [];
+    let nextError: Error | null = null;
+    const config = {
+      mode,
+      from: "Very Good Fireplaces <orders@verygoodfireplaces.com>",
+      replyTo: "Brendan@verygoodfireplaces.com",
+      bcc: ["Brendan@verygoodfireplaces.com"],
+      notifyTo: ["brendan@example.com"],
+    };
+    const mailer = {
+      mode,
+      replyTo: "Brendan@verygoodfireplaces.com",
+      send: async (e: Parameters<typeof mod.email.sendSupplierEmail>[0]) => {
+        const body = mod.email.buildSupplierEmailBody(e, config);
+        if (nextError) {
+          const err = nextError;
+          nextError = null;
+          throw err;
+        }
+        await new Promise((r) => setTimeout(r, 5)); // let concurrent callers overlap
+        sent.push({ supplierId: e.supplier.id, to: body.to, subject: body.subject, text: e.text, key: e.idempotencyKey });
+        return { mode, to: body.to, subject: body.subject, messageId: `msg_${sent.length}` };
+      },
+    };
+    return { mailer, sent, fail: (err: Error) => void (nextError = err) };
+  }
+  let mail: ReturnType<typeof fakeMailer>;
+
   const at = (hours: number) => new Date(CREATED.getTime() + hours * HOUR);
-  const created = (p = payload(), t = at(0)) => mod.service.processOrderCreated(mod.db, p, t, BASE);
-  const paid = (p = payload({ financial_status: "paid" }), t = at(48)) => mod.service.processOrderPaid(mod.db, p, t, BASE);
+  const created = (p = payload(), t = at(0), m = mail) => mod.service.processOrderCreated(mod.db, p, t, BASE, m.mailer, t);
+  const paid = (p = payload({ financial_status: "paid" }), t = at(48), m = mail) => mod.service.processOrderPaid(mod.db, p, t, BASE, m.mailer, t);
+  const supplierEmailRows = () => mod.db.select().from(mod.schema.supplierEmails);
+  const openAlertKeys = async () => (await mod.alerts.listOpenAlerts(mod.db)).map((a) => [a.key, a.severity]).sort();
   const cancelled = (p = payload({ cancelled_at: at(30).toISOString() }), t = at(30)) => mod.service.processOrderCancelled(mod.db, p, t, BASE);
   const allOrders = () => mod.db.select().from(mod.schema.orders);
   const oneOrder = async () => {
@@ -95,7 +138,7 @@ describe("order fulfillment (database)", { skip: TEST_DB ? false : "set ORDERS_T
   test("orders/create stores the order once; a retry is a no-op", async () => {
     const first = await created();
     assert.equal(first.body.created, true);
-    assert.equal(first.email?.subject, "Order #1322 placed: ready to send to Modern Flames (card not charged yet)");
+    assert.equal(first.email?.subject, "Order #1322 placed: TEST supplier email for Modern Flames sent to you only (card not charged yet)");
     const retry = await created();
     assert.deepEqual(retry, { body: { created: false, reason: "duplicate", shopifyOrderId: "7001" }, email: null });
 
@@ -117,7 +160,8 @@ describe("order fulfillment (database)", { skip: TEST_DB ? false : "set ORDERS_T
     const deps = {
       topic: "orders/create" as const,
       secrets: [secret],
-      process: (p: Parameters<typeof mod.service.processOrderCreated>[1], t: Date) => mod.service.processOrderCreated(mod.db, p, t, BASE),
+      process: (p: Parameters<typeof mod.service.processOrderCreated>[1], t: Date) =>
+        mod.service.processOrderCreated(mod.db, p, t, BASE, mail.mailer, t),
       notify: async (e: { subject: string }) => {
         sent.push(e.subject);
       },
@@ -133,7 +177,8 @@ describe("order fulfillment (database)", { skip: TEST_DB ? false : "set ORDERS_T
     const retry = await mod.handler.handleOrderWebhook(request(), deps);
     assert.equal(retry.status, 200);
     assert.equal((await retry.json()).reason, "duplicate");
-    assert.deepEqual(sent, ["Order #1322 placed: ready to send to Modern Flames (card not charged yet)"]);
+    assert.deepEqual(sent, ["Order #1322 placed: TEST supplier email for Modern Flames sent to you only (card not charged yet)"]);
+    assert.equal(mail.sent.length, 1); // one test-mode supplier email, none on the retry
   });
 
   test("create then paid: paid records the charge on the same row and sends no email", async () => {
@@ -155,9 +200,11 @@ describe("order fulfillment (database)", { skip: TEST_DB ? false : "set ORDERS_T
   test("paid before create: paid stores the order (one email), the late create is a no-op", async () => {
     const first = await paid(undefined, at(0));
     assert.equal(first.body.orderCreated, true);
-    assert.equal(first.email?.subject, "Order #1322 placed: ready to send to Modern Flames (card already charged)");
+    assert.equal(first.email?.subject, "Order #1322 placed: TEST supplier email for Modern Flames sent to you only (card already charged)");
+    assert.equal(mail.sent.length, 1);
     const late = await created();
     assert.equal(late.email, null);
+    assert.equal(mail.sent.length, 1); // the late create finds the email already sent
     assert.equal(late.body.reason, "duplicate");
     const order = await oneOrder();
     assert.equal(order.charged, true);
@@ -195,8 +242,10 @@ describe("order fulfillment (database)", { skip: TEST_DB ? false : "set ORDERS_T
     );
     assert.equal(result.body.status, "needs_attention");
     assert.equal(result.email?.subject, "Order #1322 placed: needs attention (card not charged yet)");
-    assert.match(result.email!.text, /"Faber"/);
-    assert.match(result.email!.text, /Drafts are ready for: (Modern Flames, Touchstone|Touchstone, Modern Flames)/);
+    assert.match(result.email!.text, /Unmatched vendor Faber on order #1322/);
+    assert.match(result.email!.text, /Touchstone: Place order #1322 in the Touchstone dealer portal\./);
+    assert.match(result.email!.text, /Modern Flames: TEST MODE/);
+    assert.deepEqual(mail.sent.map((m) => m.supplierId), ["modern_flames"]);
 
     const items = await mod.db.select().from(mod.schema.orderItems);
     assert.equal(items.length, 3); // Extend excluded
@@ -345,6 +394,197 @@ describe("order fulfillment (database)", { skip: TEST_DB ? false : "set ORDERS_T
     fail = false;
     assert.equal((await mod.service.runOrderCheck(mod.db, send, BASE, at(26))).emailsSent, 1);
     assert.equal(sent.length, 1);
+  });
+
+  // ---- automatic supplier emails --------------------------------------
+
+  test("live: one email to the supplier's address; order marked sent; logged in supplier_emails", async () => {
+    mail = fakeMailer("live");
+    const result = await created();
+    assert.equal(result.email?.subject, "Order #1322 placed: emailed to Modern Flames (card not charged yet)");
+    assert.match(result.email!.text, /Modern Flames: supplier email sent to orders@modernflames.com/);
+    assert.deepEqual(mail.sent.map((m) => [m.to, m.subject]), [[["orders@modernflames.com"], "New Order [#1322] from Very Good Fireplaces"]]);
+    assert.match(mail.sent[0]!.text, /^Hello,\n\nWe have a new order to place with you\./);
+
+    const order = await oneOrder();
+    assert.equal(order.status, "sent");
+    assert.equal(order.sentAt?.toISOString(), at(0).toISOString());
+    assert.ok((await mod.db.select().from(mod.schema.orderItems)).every((i) => i.sentAt !== null));
+    const [row] = await supplierEmailRows();
+    assert.deepEqual(
+      [row!.supplierId, row!.mode, row!.status, row!.toAddresses, row!.resendMessageId, row!.sentAt?.toISOString()],
+      ["modern_flames", "live", "sent", ["orders@modernflames.com"], "msg_1", at(0).toISOString()],
+    );
+    assert.deepEqual(await openAlertKeys(), []);
+  });
+
+  test("retry: replaying the same orders/create webhook never sends the supplier email again", async () => {
+    mail = fakeMailer("live");
+    await created();
+    for (let i = 0; i < 3; i++) {
+      const retry = await created(undefined, at(0.1 * (i + 1)));
+      assert.equal(retry.body.reason, "duplicate");
+      assert.equal(retry.email, null);
+    }
+    // ...nor does the hourly safety net.
+    const check = await mod.service.runOrderCheck(mod.db, async () => {}, BASE, at(1), mail.mailer);
+    assert.equal(check.supplierEmailsSent, 0);
+    assert.equal(mail.sent.length, 1);
+    assert.equal((await supplierEmailRows()).length, 1);
+  });
+
+  test("concurrent duplicate deliveries send exactly one supplier email", async () => {
+    mail = fakeMailer("live");
+    await Promise.all(Array.from({ length: 6 }, () => created()));
+    assert.equal(mail.sent.length, 1);
+    assert.equal((await allOrders()).length, 1);
+    assert.equal((await oneOrder()).status, "sent");
+  });
+
+  test("a definite send failure is recorded and alerted, and the next retry sends it once with a new key", async () => {
+    mail = fakeMailer("live");
+    mail.fail(new mod.email.SupplierEmailNotSentError("Resend error (HTTP 422): invalid to"));
+    const first = await created();
+    assert.equal(first.email?.subject, "Order #1322 placed: needs attention (card not charged yet)");
+    assert.match(first.email!.text, /Modern Flames: the supplier email FAILED \(Resend error \(HTTP 422\): invalid to\)/);
+    assert.equal((await supplierEmailRows())[0]!.status, "failed");
+    assert.equal((await oneOrder()).status, "draft_ready");
+    assert.deepEqual(await openAlertKeys(), [["supplier_email_failed_1322", "urgent"]]);
+
+    const retry = await created(undefined, at(0.2));
+    assert.equal(retry.email?.subject, "Order #1322 supplier email update: emailed to Modern Flames");
+    assert.deepEqual(mail.sent.map((m) => m.key), [`vgf-supplier-order/${(await oneOrder()).id}/modern_flames/2`]);
+    assert.equal((await oneOrder()).status, "sent");
+    assert.deepEqual(await openAlertKeys(), []);
+    assert.equal((await created(undefined, at(0.3))).email, null);
+    assert.equal(mail.sent.length, 1);
+  });
+
+  test("an uncertain failure (network) is not re-sent right away; after 10 minutes it's retried with the same key", async () => {
+    mail = fakeMailer("live");
+    mail.fail(new Error("fetch failed"));
+    await created();
+    const orderId = (await oneOrder()).id;
+    assert.equal((await supplierEmailRows())[0]!.status, "sending");
+
+    await created(undefined, at(0.05)); // 3 minutes later: still claimed
+    assert.equal(mail.sent.length, 0);
+
+    const check = await mod.service.runOrderCheck(mod.db, async () => {}, BASE, at(0.25), mail.mailer);
+    assert.equal(check.supplierEmailsSent, 1);
+    assert.deepEqual(mail.sent.map((m) => m.key), [`vgf-supplier-order/${orderId}/modern_flames/1`]);
+  });
+
+  test("test mode: goes to Brendan only, order stays unsent, and switching to live later doesn't re-send it", async () => {
+    await created();
+    assert.deepEqual(mail.sent.map((m) => [m.to, m.subject]), [
+      [["brendan@example.com"], "[TEST - would go to orders@modernflames.com] New Order [#1322] from Very Good Fireplaces"],
+    ]);
+    const order = await oneOrder();
+    assert.equal(order.status, "draft_ready");
+    assert.equal(order.sentAt, null);
+    assert.equal((await supplierEmailRows())[0]!.mode, "test");
+
+    const live = fakeMailer("live");
+    await created(undefined, at(0.5), live);
+    await mod.service.runOrderCheck(mod.db, async () => {}, BASE, at(1), live.mailer);
+    assert.equal(live.sent.length, 0);
+  });
+
+  test("Touchstone (portal): no supplier email, a warning alert and the portal line for Brendan", async () => {
+    mail = fakeMailer("live");
+    const result = await created(payload({ line_items: [{ sku: "80044", name: "Sideline Elite 100", quantity: 1, vendor: "Touchstone", requires_shipping: true }] }));
+    assert.equal(mail.sent.length, 0);
+    assert.match(result.email!.text, /Touchstone: Place order #1322 in the Touchstone dealer portal\./);
+    const [alert] = await mod.alerts.listOpenAlerts(mod.db);
+    assert.deepEqual([alert!.key, alert!.severity, alert!.message], ["order_attention_1322", "warning", "Place order #1322 in the Touchstone dealer portal."]);
+
+    // Brendan places it in the portal and marks it sent: the alert resolves.
+    await mod.service.markSupplierSent(mod.db, (await oneOrder()).id, "touchstone", at(2));
+    assert.deepEqual(await openAlertKeys(), []);
+  });
+
+  test("unmatched vendor and inactive Evolution Fires: alert only, never emailed", async () => {
+    mail = fakeMailer("live");
+    const result = await created(
+      payload({
+        line_items: [
+          { sku: "EVO-1", name: "Evolution 50", quantity: 1, vendor: "Evolution Fires", requires_shipping: true },
+          { sku: "FAB-1", name: "Faber thing", quantity: 1, vendor: "Faber", requires_shipping: true },
+        ],
+      }),
+    );
+    assert.equal(mail.sent.length, 0);
+    assert.equal((await supplierEmailRows()).length, 0);
+    assert.ok((await mod.db.select().from(mod.schema.orderItems)).every((i) => i.supplierId === null));
+    assert.equal((await oneOrder()).status, "needs_attention");
+    const [alert] = await mod.alerts.listOpenAlerts(mod.db);
+    assert.match(alert!.message, /Unmatched vendor Evolution Fires on order #1322 \(Evolution Fires is no longer an active supplier/);
+    assert.match(alert!.message, /Unmatched vendor Faber on order #1322\./);
+    assert.match(result.email!.text, /Unmatched vendor Faber/);
+  });
+
+  test("Litedeer's first live order is sent and flagged as the first order to that address", async () => {
+    mail = fakeMailer("live");
+    const result = await created(payload({ line_items: [{ sku: "LD-1", name: "WarmCastle", quantity: 1, vendor: "Litedeer Homes", requires_shipping: true }] }));
+    assert.deepEqual(mail.sent.map((m) => m.to), [["litedeerhomes@gmail.com"]]);
+    assert.match(result.email!.text, /This is the first order to litedeerhomes@gmail.com/);
+    const [litedeer] = await mod.db.select().from(mod.schema.suppliers).where(mod.sql`id = 'litedeer'`);
+    assert.equal(litedeer!.orderedBefore, true);
+  });
+
+  test("mixed suppliers: one email each; the order is sent only once the portal part is done too", async () => {
+    mail = fakeMailer("live");
+    const result = await created(
+      payload({
+        line_items: [
+          { sku: "LPM-12016", name: "Landscape Pro", quantity: 1, vendor: "Modern Flames", requires_shipping: true },
+          { sku: "E-FX-60", name: "E-FX 60", quantity: 1, vendor: "Sustainable Hearth", requires_shipping: true },
+          { sku: "LPM-TRIM", name: "Landscape trim", quantity: 2, vendor: "MODERN FLAMES", requires_shipping: true },
+          { sku: "80044", name: "Sideline Elite 100", quantity: 1, vendor: "Touchstone", requires_shipping: true },
+        ],
+      }),
+    );
+    assert.deepEqual(mail.sent.map((m) => [m.supplierId, m.to[0]]).sort(), [
+      ["modern_flames", "orders@modernflames.com"],
+      ["sustainable_hearth", "inside.sales@sustainablehearth.com"],
+    ]);
+    const mf = mail.sent.find((m) => m.supplierId === "modern_flames")!;
+    assert.match(mf.text, /- Qty 1: Landscape Pro \(SKU LPM-12016\)\n- Qty 2: Landscape trim \(SKU LPM-TRIM\)/);
+    const sh = mail.sent.find((m) => m.supplierId === "sustainable_hearth")!;
+    assert.match(sh.text, /^Hi Holly,/);
+    assert.match(sh.text, /Please ship to the address below\. Include shipping on the invoice\./);
+    assert.equal(result.email?.subject, "Order #1322 placed: needs attention (card not charged yet)");
+
+    let order = await oneOrder();
+    assert.equal(order.status, "draft_ready");
+    assert.equal(order.sentAt, null);
+    order = await mod.service.markSupplierSent(mod.db, order.id, "touchstone", at(3));
+    assert.equal(order.status, "sent");
+  });
+
+  test("orders stored before this feature, and cancelled orders, are never emailed", async () => {
+    mail = fakeMailer("live");
+    await mod.service.processOrderCancelled(mod.db, payload({ cancelled_at: at(0).toISOString() }), at(0), BASE);
+    await created();
+    assert.equal(mail.sent.length, 0);
+
+    await mod.db.execute(mod.sql`truncate table supplier_emails, order_items, orders, alerts`);
+    const quiet = fakeMailer("test");
+    await created(undefined, at(0), quiet);
+    await mod.db.execute(mod.sql`update orders set auto_supplier_email = false`);
+    await mod.db.execute(mod.sql`delete from supplier_emails`);
+    await created(undefined, at(0.5));
+    await mod.service.runOrderCheck(mod.db, async () => {}, BASE, at(1), mail.mailer);
+    assert.equal(mail.sent.length, 0);
+  });
+
+  test("the alert emails are marked emailed once Brendan's notification goes out", async () => {
+    mail = fakeMailer("live");
+    const result = await created(payload({ line_items: [{ sku: "80044", name: "Sideline", quantity: 1, vendor: "Touchstone", requires_shipping: true }] }));
+    assert.equal((await mod.alerts.listOpenAlerts(mod.db))[0]!.emailedAt, null);
+    await result.onNotified?.();
+    assert.ok((await mod.alerts.listOpenAlerts(mod.db))[0]!.emailedAt);
   });
 
   test("alerts: one open row per key, and a resolved key can reopen as a new row", async () => {

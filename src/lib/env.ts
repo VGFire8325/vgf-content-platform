@@ -36,6 +36,15 @@ const envSchema = z.object({
   RESEND_API_KEY: z.string().min(1),
   ORDER_NOTIFY_TO: z.string().min(1), // Brendan's address
   ORDER_NOTIFY_FROM: z.string().min(1), // e.g. "VGF Orders <orders@verygoodfireplaces.com>"
+  // Automatic supplier order emails (src/lib/orders/supplier-email.ts,
+  // sendSupplierEmail in src/lib/email.ts) — a separate sender from the
+  // internal alerts above. Two more, both optional, are read by
+  // supplierEmailMode / supplierEmailBcc below:
+  //   SUPPLIER_EMAIL_MODE: "live" emails the real supplier; anything else,
+  //     or unset, is "test" (every supplier email goes to ORDER_NOTIFY_TO only).
+  //   SUPPLIER_EMAIL_BCC: copy of every live supplier email (Brendan).
+  SUPPLIER_EMAIL_FROM: z.string().min(1), // "Very Good Fireplaces <orders@verygoodfireplaces.com>"
+  SUPPLIER_EMAIL_REPLY_TO: z.string().min(1), // where suppliers' replies go (Brendan)
 });
 
 type Env = z.infer<typeof envSchema>;
