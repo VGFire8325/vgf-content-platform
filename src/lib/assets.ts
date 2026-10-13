@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { db as DbClient } from "@/db/client";
 import { assetLibrary, contentAssets } from "@/db/schema";
 import { BRAND_CORE, callStructuredTool } from "./anthropic";
+import { optionalEnvBool } from "./env";
 
 // The blog's entire content taxonomy (confirmed against production:
 // `SELECT DISTINCT unnest(tags) FROM articles` never returns anything
@@ -56,6 +57,60 @@ export function rankAssetsByScore<T extends { tags: string[] }>(candidates: T[],
 }
 
 type AssetRow = typeof assetLibrary.$inferSelect;
+
+// Off by default. The per-image visual tags from migration 0008 (setting,
+// room, alt_text, ...) are now filled in for every row, and the library
+// grew from 108 to 760 rows, most of them with an empty `tags` array, so
+// the semantic pass below would otherwise be sent every row. With this on,
+// the candidate pool drops renders/diagrams/details, puts real installed
+// photos ahead of plain product shots, describes each candidate by its
+// visual tags, and caps what the semantic pass sees. Left off until it has
+// been checked against real articles.
+export function useVisualTagMatching(): boolean {
+  return optionalEnvBool("ASSET_MATCH_USE_TAGS", false);
+}
+
+// Semantic-pass prompt size limit when visual-tag matching is on — the
+// pool is pre-ranked by tagRank, so the cut drops the weakest photos.
+export const SEMANTIC_CANDIDATE_CAP = 200;
+
+type TaggedFields = { setting?: string | null; featuredOk?: boolean | null; quality?: number | null };
+
+// Untagged rows (setting null) are kept so a newly added photo isn't
+// invisible before it's been tagged; they rank last.
+const MATCHABLE_SETTINGS = new Set(["installed", "product_only"]);
+
+function tagRank(asset: TaggedFields): number {
+  if (asset.setting === "installed") return asset.featuredOk ? 0 : 1;
+  if (asset.setting === "product_only") return 2;
+  return 3;
+}
+
+// Pure: filters to matchable settings and orders featured installed photos
+// first, then other installed photos, product-only shots, and untagged rows,
+// higher quality first within each group. Stable otherwise, so the caller's
+// newest-first order still breaks ties.
+export function rankTaggedCandidates<T extends TaggedFields>(candidates: T[]): T[] {
+  return candidates
+    .filter((c) => c.setting == null || MATCHABLE_SETTINGS.has(c.setting))
+    .map((c, i) => ({ c, i }))
+    .sort((a, b) => tagRank(a.c) - tagRank(b.c) || (b.c.quality ?? 0) - (a.c.quality ?? 0) || a.i - b.i)
+    .map(({ c }) => c);
+}
+
+// One prompt line per candidate. With visual tags, a photo is described by
+// what's actually in it rather than by its (often empty) Shopify tags.
+export function describeCandidate(
+  c: Pick<AssetRow, "id" | "tags" | "notes"> &
+    Partial<Pick<AssetRow, "setting" | "room" | "mounting" | "productName" | "altText">>,
+  withVisualTags: boolean,
+): string {
+  const base = `${c.id}: [${c.tags.join(", ")}]`;
+  if (!withVisualTags || !c.setting) return `${base}${c.notes ? ` — ${c.notes}` : ""}`;
+  const visual = [c.setting, c.room, c.mounting].filter(Boolean).join("/");
+  const product = c.productName ? ` (${c.productName})` : "";
+  return `${base} ${visual}${product}${c.altText ? ` — ${c.altText}` : ""}`;
+}
 
 // What the semantic fallback needs to judge topical fit — article tags
 // alone are Shopify's generic content taxonomy (e.g. "Room & Space"),
@@ -129,9 +184,11 @@ const SEMANTIC_MATCH_TOOL: Anthropic.Tool = {
 async function matchAssetsSemantic(
   client: Anthropic,
   article: ArticleMatchContext,
-  candidates: AssetRow[],
+  allCandidates: AssetRow[],
   limit: number,
 ): Promise<AssetRow[]> {
+  const withVisualTags = useVisualTagMatching();
+  const candidates = withVisualTags ? allCandidates.slice(0, SEMANTIC_CANDIDATE_CAP) : allCandidates;
   const system = `${BRAND_CORE}
 
 You are picking product/lifestyle photos from an approved library to
@@ -154,8 +211,8 @@ ${article.coreSubject ? `Core subject: ${article.coreSubject}\n` : ""}${
     article.keyTakeaways?.length ? `Key takeaways:\n${article.keyTakeaways.map((t) => `- ${t}`).join("\n")}\n` : ""
   }Article tags: ${article.tags.join(", ") || "(none)"}
 
-Available photos (id: tags — notes):
-${candidates.map((c) => `${c.id}: [${c.tags.join(", ")}]${c.notes ? ` — ${c.notes}` : ""}`).join("\n")}
+Available photos (${withVisualTags ? "id: tags setting/room/mounting (product) — description" : "id: tags — notes"}):
+${candidates.map((c) => describeCandidate(c, withVisualTags)).join("\n")}
 
 Pick up to ${limit} best-fitting photo id(s), ordered best first.`;
 
@@ -329,6 +386,16 @@ export function pickFallbackAsset<T extends { id: string; tags?: string[]; notes
   return fresh ?? candidates[0]!;
 }
 
+// Newest first; with visual-tag matching on, filtered and re-ranked by
+// rankTaggedCandidates (falling back to the full library if that leaves
+// nothing, so the "always a photo" guarantee below still holds).
+async function loadCandidates(db: typeof DbClient): Promise<AssetRow[]> {
+  const rows = await db.select().from(assetLibrary).orderBy(desc(assetLibrary.uploadedAt));
+  if (!useVisualTagMatching()) return rows;
+  const ranked = rankTaggedCandidates(rows);
+  return ranked.length > 0 ? ranked : rows;
+}
+
 // Only an empty library returns null — every other case is guaranteed a
 // photo. A post going out with no image at all is worse than one with an
 // imperfect image, so "no confident match" falls back through
@@ -342,7 +409,7 @@ export async function selectAssetForArticle(
   client: Anthropic,
   article: ArticleMatchContext,
 ): Promise<AssetRow | null> {
-  const allCandidates = await db.select().from(assetLibrary).orderBy(desc(assetLibrary.uploadedAt));
+  const allCandidates = await loadCandidates(db);
   if (allCandidates.length === 0) return null;
 
   const recentlyUsed = await recentlyUsedAssetIds(db, RECENT_ASSET_WINDOW_DAYS);
@@ -370,7 +437,7 @@ export async function selectAssetsForArticle(
   article: ArticleMatchContext,
   limit: number,
 ): Promise<AssetRow[]> {
-  const allCandidates = await db.select().from(assetLibrary).orderBy(desc(assetLibrary.uploadedAt));
+  const allCandidates = await loadCandidates(db);
   if (allCandidates.length === 0) return [];
 
   const recentlyUsed = await recentlyUsedAssetIds(db, RECENT_ASSET_WINDOW_DAYS);

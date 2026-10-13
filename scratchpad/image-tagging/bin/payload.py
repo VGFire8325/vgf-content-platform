@@ -33,6 +33,7 @@ else:
     out = []
     for r in fin:
         if r["url"].split("?")[0] in exu or skip_reason(r): continue
+        if r["setting"] not in ("installed", "product_only"): continue  # option (b): render/other/detail not inserted
         d = tags(r); d["u"] = r["url"]; d["pid"] = r["shopify_product_id"]
         if r["kind"] == "product": d["b"], d["p"] = r["brand"], r["product_name"]; d["n"] = f"Imported from Shopify product: {r['product_name']} ({r['brand']})"
         elif r["kind"] == "collection": d["n"] = f"Collection image: {r['source_title']}"

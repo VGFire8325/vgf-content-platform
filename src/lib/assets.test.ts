@@ -2,11 +2,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   dedupeById,
+  describeCandidate,
   filterUnderReuseCap,
   normalizeSemanticMatchInput,
   pickFallbackAsset,
   rankAssetsByScore,
+  rankTaggedCandidates,
   scoreAssetMatch,
+  useVisualTagMatching,
 } from "./assets";
 
 test("scoreAssetMatch counts overlapping tags case-insensitively", () => {
@@ -189,4 +192,65 @@ test("normalizeSemanticMatchInput coerces a newline-joined matchedAssetIds strin
 test("normalizeSemanticMatchInput defaults a non-string, non-array matchedAssetIds (e.g. null) to an empty array", () => {
   const normalized = normalizeSemanticMatchInput({ reasoning: "x", matchedAssetIds: null });
   assert.deepEqual(normalized, { reasoning: "x", matchedAssetIds: [] });
+});
+
+test("rankTaggedCandidates drops render/diagram/detail/other and ranks featured installed first", () => {
+  const rows = [
+    { id: "untagged", setting: null, featuredOk: null, quality: null },
+    { id: "product", setting: "product_only", featuredOk: false, quality: 5 },
+    { id: "render", setting: "render", featuredOk: false, quality: 5 },
+    { id: "installed-q3", setting: "installed", featuredOk: false, quality: 3 },
+    { id: "diagram", setting: "diagram", featuredOk: false, quality: 4 },
+    { id: "featured-q4", setting: "installed", featuredOk: true, quality: 4 },
+    { id: "featured-q5", setting: "installed", featuredOk: true, quality: 5 },
+  ];
+  assert.deepEqual(
+    rankTaggedCandidates(rows).map((r) => r.id),
+    ["featured-q5", "featured-q4", "installed-q3", "product", "untagged"],
+  );
+});
+
+test("rankTaggedCandidates keeps input order for equal rank and quality", () => {
+  const rows = [
+    { id: "a", setting: "installed", featuredOk: true, quality: 4 },
+    { id: "b", setting: "installed", featuredOk: true, quality: 4 },
+  ];
+  assert.deepEqual(
+    rankTaggedCandidates(rows).map((r) => r.id),
+    ["a", "b"],
+  );
+});
+
+test("describeCandidate uses visual tags and alt text only when enabled and tagged", () => {
+  const row = {
+    id: "x",
+    tags: [],
+    notes: "Imported from Shopify product",
+    setting: "installed",
+    room: "bedroom",
+    mounting: "built_in",
+    productName: "Spectrum Slimline 50",
+    altText: "Linear fireplace in a stone column",
+  };
+  assert.equal(describeCandidate(row, false), "x: [] — Imported from Shopify product");
+  assert.equal(
+    describeCandidate(row, true),
+    "x: [] installed/bedroom/built_in (Spectrum Slimline 50) — Linear fireplace in a stone column",
+  );
+  assert.equal(describeCandidate({ ...row, setting: null }, true), "x: [] — Imported from Shopify product");
+});
+
+test("useVisualTagMatching is off unless ASSET_MATCH_USE_TAGS is exactly 'true'", () => {
+  const prev = process.env.ASSET_MATCH_USE_TAGS;
+  try {
+    delete process.env.ASSET_MATCH_USE_TAGS;
+    assert.equal(useVisualTagMatching(), false);
+    process.env.ASSET_MATCH_USE_TAGS = "1";
+    assert.equal(useVisualTagMatching(), false);
+    process.env.ASSET_MATCH_USE_TAGS = "true";
+    assert.equal(useVisualTagMatching(), true);
+  } finally {
+    if (prev === undefined) delete process.env.ASSET_MATCH_USE_TAGS;
+    else process.env.ASSET_MATCH_USE_TAGS = prev;
+  }
 });
