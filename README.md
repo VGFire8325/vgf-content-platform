@@ -166,6 +166,12 @@ or `psql "$DATABASE_URL_DIRECT" -f drizzle/0007_order_fulfillment.sql`).
 rows or row-level security, since those are hand-written SQL in that file.
 The seed uses `ON CONFLICT DO NOTHING`, so re-running it is safe.
 
+**Already applied to production** (2026-10-12, through the Supabase
+connector; Supabase records it as `0007_order_fulfillment`). Don't run
+it again: its two `CREATE TYPE` statements aren't `IF NOT EXISTS` and
+would fail. See "Database migrations" below for how applied migrations
+are tracked.
+
 ### Environment variables (Vercel)
 
 | Variable | What |
@@ -247,6 +253,73 @@ automatically, pushing tracking to Shopify, and the remaining exceptions
 manual buttons and the free-text reply field; cancellations already
 arrive by webhook. See the comment at the top of
 `app/review/orders/actions.ts` for where each one plugs in.
+
+## Adding or tagging images after new products
+
+`asset_library` holds every Shopify image the bots may pick from, plus
+per-image tags that say what the photo actually shows (migration 0008):
+`setting` (`installed`, `product_only`, `render`, `detail`, `diagram`,
+`other`), `room`, `mounting`, `brand`, `product_name`, `style`,
+`colors`, `quality` (1–5), `width_px`, `height_px`, `featured_ok`,
+`alt_text`, `confidence` and `tagged_at`. Allowed values live in
+`src/db/asset-vocab.ts` and are enforced by CHECK constraints. Only
+`setting = 'installed'` photos show a fireplace in a real room;
+`featured_ok` can only be true for installed photos with quality 4+ that
+are at least 800px wide.
+
+After adding products in Shopify, run:
+
+```bash
+DATABASE_URL=... npm run images:sync -- --dry-run   # see what's new, write nothing
+DATABASE_URL=... npm run images:sync                # add the new images
+```
+
+It pulls every image of every active, in-stock fireplace product (all
+media, not only the featured image), collection images, blog article
+images and Shopify Files that look like site photography (logos,
+banners, screenshots, dimension drawings and AI-generated images are
+skipped). It dedupes by Shopify image id and by URL, inserts only new
+rows, and never deletes or rewrites existing ones. At the end it lists
+every row with no `tagged_at` yet and writes the full list to
+`$TMPDIR/vgf-image-tagging-queue.json`. Hand that list to Claude to tag
+just those images by eye. Nothing runs on a schedule.
+
+The script reads products, collections, articles and Files through the
+app's own Shopify token, which needs `read_products`, `read_files` and
+`read_content`. The app only had `read_content` when this was written:
+if the script stops with a missing-scope error, add the scopes to
+`[access_scopes]` in `shopify.app.toml` and `SHOPIFY_SCOPES` in
+`src/lib/platforms/shopify.ts`, run `shopify app deploy`, then reconnect
+via `/api/oauth/shopify/start`.
+
+Example query for the blog writer (installed, featured-quality photos
+for one room):
+
+```sql
+select file_url, alt_text, brand, product_name, width_px, height_px
+from public.asset_library
+where setting = 'installed' and featured_ok and room = 'bedroom'
+order by quality desc, width_px desc;
+```
+
+`/assets` has read-only Setting and Room filters (including "not tagged
+yet") for reviewing the tags.
+
+## Database migrations
+
+Production does not use `drizzle-kit migrate`: there is no
+`drizzle.__drizzle_migrations` table in the Supabase database. Each
+`drizzle/NNNN_*.sql` file is applied once, by hand, through the Supabase
+connector's `apply_migration` (recorded in
+`supabase_migrations.schema_migrations`) or the SQL editor. Nothing in
+the build, the crons or the npm scripts runs migrations automatically.
+The only `migrate()` call is in `src/lib/orders/orders-db.test.ts`,
+against a throwaway local database. `npm run db:push` diffs
+`src/db/schema.ts` against the live schema rather than replaying files,
+so it won't re-run old migrations either. Never point
+`drizzle-kit migrate` at production: with no tracking table it would
+start again from 0000 (it runs in one transaction, so it would fail and
+roll back on the first `CREATE TYPE`).
 
 ## Stack
 
