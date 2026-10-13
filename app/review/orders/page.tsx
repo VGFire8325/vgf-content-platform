@@ -108,7 +108,7 @@ function UnmatchedItems({ order, items, supplierList }: { order: OrderRow; items
           </span>{" "}
           <select name="supplierId" defaultValue="">
             <option value="" disabled>Choose supplier…</option>
-            {supplierList.map((s) => (
+            {supplierList.filter((s) => s.active).map((s) => (
               <option key={s.id} value={s.id}>{s.name}</option>
             ))}
           </select>{" "}

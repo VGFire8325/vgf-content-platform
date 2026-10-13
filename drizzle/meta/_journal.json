@@ -64,6 +64,13 @@
       "when": 1791878498261,
       "tag": "0008_add_image_tagging",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791922668839,
+      "tag": "0009_supplier_email",
+      "breakpoints": true
     }
   ]
 }
