@@ -347,7 +347,13 @@ async function renderPinterestPinItem(
   // nothing to do with the actual (often plain) product shot that got
   // used. Rewrite it now from the real asset's own tags/notes, the only
   // things actually known about the photo — never invented.
-  const groundedAltText = await writeAltTextForAsset(client, { tags: asset.tags, notes: asset.notes });
+  // Since migration 0008 each library photo has a reviewed alt_text
+  // written while looking at the actual image. Prefer that; only fall
+  // back to generating from tags/notes for untagged photos.
+  const storedAltText = asset.altText?.trim();
+  const groundedAltText = storedAltText
+    ? storedAltText
+    : await writeAltTextForAsset(client, { tags: asset.tags, notes: asset.notes });
   const updatedCopyFields = { ...(item.copyFields as Record<string, unknown>), altText: groundedAltText };
 
   // Spec 3 quality gate, second (authoritative) pass — the real photo
