@@ -57,6 +57,13 @@
       "when": 1791561123001,
       "tag": "0007_order_fulfillment",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791878498261,
+      "tag": "0008_add_image_tagging",
+      "breakpoints": true
     }
   ]
 }

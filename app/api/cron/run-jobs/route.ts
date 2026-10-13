@@ -531,6 +531,26 @@ async function finalizePublished(
   });
 }
 
+// Pinterest pins and Instagram carousels can't go out without an image,
+// and only installed-in-a-room photos may be used (src/lib/assets.ts), so
+// when render_image found none (needs_asset) the publish is skipped:
+// failed once, terminally, with this reason — not retried, since retrying
+// can't produce a photo. Thrown as PlatformValidationError so
+// handleNonAuthFailure marks both the publish target and the item failed
+// rather than leaving them stranded at failed_retrying.
+const NO_INSTALLED_PHOTO_MESSAGE =
+  "Skipped: no installed-in-a-room photo matches this article, and this platform needs an image. Add or tag a matching installed photo, regenerate the image, then reschedule.";
+
+async function latestAssetNeedsPhoto(contentItemId: string): Promise<boolean> {
+  const [latest] = await db
+    .select({ status: contentAssets.status })
+    .from(contentAssets)
+    .where(eq(contentAssets.contentItemId, contentItemId))
+    .orderBy(desc(contentAssets.createdAt))
+    .limit(1);
+  return latest?.status === "needs_asset";
+}
+
 async function handleNonAuthFailure(publishTargetId: string, contentItemId: string, err: unknown, forceTerminal = false) {
   const message = err instanceof Error ? err.message : String(err);
   // A validation error (bad request shape, rejected content) won't
@@ -662,6 +682,7 @@ async function runPublishPost(job: Job) {
         .orderBy(desc(contentAssets.createdAt))
         .limit(1);
       if (!asset?.fileUrl) {
+        if (await latestAssetNeedsPhoto(item.id)) throw new PlatformValidationError(NO_INSTALLED_PHOTO_MESSAGE);
         // Plain Error, not NonRetryableJobError: this is meant to be a
         // transient race against render_image, which normally finishes
         // well before the scheduled publish time — retrying (up to
@@ -748,6 +769,7 @@ async function runPublishPost(job: Job) {
         .from(contentAssets)
         .where(and(eq(contentAssets.contentItemId, item.id), eq(contentAssets.status, "rendered")));
       if (renderedAssets.length === 0) {
+        if (await latestAssetNeedsPhoto(item.id)) throw new PlatformValidationError(NO_INSTALLED_PHOTO_MESSAGE);
         // Same reasoning as the Pinterest branch above — retryable, not
         // a permanent failure on the first attempt.
         throw new Error("No rendered slides for this carousel yet — publish ran before render_image finished");

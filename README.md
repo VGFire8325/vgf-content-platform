@@ -25,7 +25,7 @@ no other code path gates generation.
 2. Shopify ingestion + extraction pipeline: a daily poll (`/api/cron/poll-shopify-articles`, `src/lib/platforms/shopify-articles.ts`) rather than a webhook — Shopify has no webhook topic for blog articles on any API surface, see below — with the same content-hash dedup, job queue (`jobs` table with `SKIP LOCKED` claiming), a Vercel Cron runner (`/api/cron/run-jobs`) implementing the §5 retry/backoff policy, and the `extract_article` job (Claude call → structured extraction → `article_extractions`). Shopify's own connection (`/api/oauth/shopify/*`) uses the OAuth authorization code grant, not a static token — Shopify stopped issuing those for Dev Dashboard apps on Jan 1, 2026.
 3. Per-platform content generation (`generate_content` job) for all four platforms, plus the discrete claim-grounding pass from §3 that flags any generated claim not backed by the article.
 4. Review Queue UI (`/review`) and server actions: approve / approve-all / reject, inline copy edit, free-text instruction box, and per-field "regenerate" buttons — all going through the same in-place-edit rule from §4 (editing an approved/scheduled item reverts it to `in_review` and cancels its pending publish). `/review` is strictly the to-do list — `REVIEW_QUEUE_STATUSES` (`src/lib/review.ts`) is just `in_review`, so an item disappears from it the moment it's approved, not when it publishes. Approved/scheduled items move to a separate `/scheduled` screen (`SCHEDULED_VIEW_STATUSES`) showing what's queued and when, or "waiting for platform connection" for an approved item with nowhere to schedule yet. Published/rejected/failed items don't get a screen at all — `publish_log` is already the history, so `contentItems.status` now actually flips to `published`/`failed` on a terminal publish outcome (a real gap fixed alongside this: `runPublishPost` used to only ever update `publishTargets.status`, so a successfully-published item would have sat in `scheduled` forever).
-5. Image compositor: two fixed Pinterest pin templates plus a square Instagram slide template (`src/lib/templates/`) rendered server-side with Satori → resvg (`src/lib/render.ts`), a `render_image` job wired to run automatically after Pinterest/Instagram copy generation, approved-image selection (`src/lib/assets.ts`) that still explicitly refuses to guess — nothing reasonable means the item is flagged `needs_asset` rather than silently picking an unrelated photo or falling back to an AI-generated visual. Selection tries exact tag overlap first (free, instant), then falls back to a Claude call that judges topical/visual fit from the article's title, extraction, and each candidate's tags/notes. That fallback is the common path, not a rare one — Shopify's article tags are a generic content taxonomy (e.g. `"Room & Space"`) that was never going to share a string space with the asset library's vendor/product-type tags, discovered when the first real bulk-imported Pinterest post still came back `needs_asset` despite the library having 108 tagged photos.
+5. Image compositor: two fixed Pinterest pin templates plus a square Instagram slide template (`src/lib/templates/`) rendered server-side with Satori → resvg (`src/lib/render.ts`), a `render_image` job wired to run automatically after Pinterest/Instagram copy generation, approved-image selection (`src/lib/assets.ts`) that still explicitly refuses to guess — nothing reasonable means the item is flagged `needs_asset` rather than silently picking an unrelated photo or falling back to an AI-generated visual. Selection tries exact tag overlap first (free, instant), then falls back to a Claude call that judges topical/visual fit from the article's title, extraction, and each candidate's tags/notes. That fallback is the common path, not a rare one — Shopify's article tags are a generic content taxonomy (e.g. `"Room & Space"`) that was never going to share a string space with the asset library's vendor/product-type tags, discovered when the first real bulk-imported Pinterest post still came back `needs_asset` despite the library having 108 tagged photos. Owner rule (added with the image-tagging work): only photos tagged `setting = 'installed'` (a fireplace installed in a real room) are ever candidates for Pinterest, Instagram, LinkedIn or blog images; product shots, renders, details, diagrams, `other` and untagged rows never are. There is no last-resort pick either: when no installed photo matches, the item is flagged `needs_asset`. A LinkedIn post then publishes as a plain link card, and a Pinterest pin or Instagram carousel is failed once with a clear reason instead of being published.
 6. **Publishing**: OAuth connect flows for Pinterest (`/api/oauth/pinterest/*`), Meta (`/api/oauth/meta/*`, one flow produces both the `facebook` and `instagram` connections since they share a Page token), and LinkedIn (`/api/oauth/linkedin/*`, resolves the connecting account's administered organization the same way Meta resolves its Page), token storage via Supabase Vault (`src/lib/vault.ts`, per §3's decision), Pinterest/Facebook/Instagram/LinkedIn API clients (`src/lib/platforms/`) — Instagram's is the full three-step Graph API container/publish flow for carousels, LinkedIn's targets the Community Management API's Posts endpoint (`POST /rest/posts`, organization-authored) — fixed-schedule spacing (`src/lib/scheduling.ts` — Pinterest capped at 2/day spread 6h apart, Facebook and LinkedIn both ~weekly, all "boring by design" per §1/§4), and the `publish_post` job implementing §5's retry + one-shot auth-renewal policy exactly: one refresh attempt, one retry with the new token, and on failure the connection is marked `expired` and every other pending publish for that platform is paused rather than left to fail one at a time. A `publish_target` still unpublished 24h past its scheduled time stops auto-retrying too, per the same section. Approving a Pinterest, Facebook, LinkedIn, or Instagram item now auto-schedules it if that platform is connected; otherwise it stays `approved` until Brendan connects it. LinkedIn was deferred out of V1's publish path in the original plan (§2/§8 — Community Management API access requires a registered-entity application with no approval guarantee) purely because that approval was pending, not for a technical reason; the client and OAuth flow are now built and ready the moment that approval comes through.
 7. **Approve is idempotent**: `approveContentItem`'s status update is gated on the item currently being `in_review` in the same statement, so a double-click or duplicate form submit can't schedule the same item to publish twice — found as a real duplicate Pinterest `publish_target` in production and fixed at the root (see `app/review/actions.ts`).
 8. **Auth**: Supabase magic-link sign-in (`/login`, `/auth/callback`), allow-listed to a single `ADMIN_EMAIL`, gating every route via `middleware.ts` except the `/api/cron/*` routes, which authenticate themselves via Vercel Cron's `CRON_SECRET` bearer token instead.
@@ -166,6 +166,12 @@ or `psql "$DATABASE_URL_DIRECT" -f drizzle/0007_order_fulfillment.sql`).
 rows or row-level security, since those are hand-written SQL in that file.
 The seed uses `ON CONFLICT DO NOTHING`, so re-running it is safe.
 
+**Already applied to production** (2026-10-12, through the Supabase
+connector; Supabase records it as `0007_order_fulfillment`). Don't run
+it again: its two `CREATE TYPE` statements aren't `IF NOT EXISTS` and
+would fail. See "Database migrations" below for how applied migrations
+are tracked.
+
 ### Environment variables (Vercel)
 
 | Variable | What |
@@ -247,6 +253,73 @@ automatically, pushing tracking to Shopify, and the remaining exceptions
 manual buttons and the free-text reply field; cancellations already
 arrive by webhook. See the comment at the top of
 `app/review/orders/actions.ts` for where each one plugs in.
+
+## Adding or tagging images after new products
+
+`asset_library` holds every Shopify image the bots may pick from, plus
+per-image tags that say what the photo actually shows (migration 0008):
+`setting` (`installed`, `product_only`, `render`, `detail`, `diagram`,
+`other`), `room`, `mounting`, `brand`, `product_name`, `style`,
+`colors`, `quality` (1–5), `width_px`, `height_px`, `featured_ok`,
+`alt_text`, `confidence` and `tagged_at`. Allowed values live in
+`src/db/asset-vocab.ts` and are enforced by CHECK constraints. Only
+`setting = 'installed'` photos show a fireplace in a real room;
+`featured_ok` can only be true for installed photos with quality 4+ that
+are at least 800px wide.
+
+After adding products in Shopify, run:
+
+```bash
+DATABASE_URL=... npm run images:sync -- --dry-run   # see what's new, write nothing
+DATABASE_URL=... npm run images:sync                # add the new images
+```
+
+It pulls every image of every active, in-stock fireplace product (all
+media, not only the featured image), collection images, blog article
+images and Shopify Files that look like site photography (logos,
+banners, screenshots, dimension drawings and AI-generated images are
+skipped). It dedupes by Shopify image id and by URL, inserts only new
+rows, and never deletes or rewrites existing ones. At the end it lists
+every row with no `tagged_at` yet and writes the full list to
+`$TMPDIR/vgf-image-tagging-queue.json`. Hand that list to Claude to tag
+just those images by eye. Nothing runs on a schedule.
+
+The script reads products, collections, articles and Files through the
+app's own Shopify token, which needs `read_products`, `read_files` and
+`read_content`. The app only had `read_content` when this was written:
+if the script stops with a missing-scope error, add the scopes to
+`[access_scopes]` in `shopify.app.toml` and `SHOPIFY_SCOPES` in
+`src/lib/platforms/shopify.ts`, run `shopify app deploy`, then reconnect
+via `/api/oauth/shopify/start`.
+
+Example query for the blog writer (installed, featured-quality photos
+for one room):
+
+```sql
+select file_url, alt_text, brand, product_name, width_px, height_px
+from public.asset_library
+where setting = 'installed' and featured_ok and room = 'bedroom'
+order by quality desc, width_px desc;
+```
+
+`/assets` has read-only Setting and Room filters (including "not tagged
+yet") for reviewing the tags.
+
+## Database migrations
+
+Production does not use `drizzle-kit migrate`: there is no
+`drizzle.__drizzle_migrations` table in the Supabase database. Each
+`drizzle/NNNN_*.sql` file is applied once, by hand, through the Supabase
+connector's `apply_migration` (recorded in
+`supabase_migrations.schema_migrations`) or the SQL editor. Nothing in
+the build, the crons or the npm scripts runs migrations automatically.
+The only `migrate()` call is in `src/lib/orders/orders-db.test.ts`,
+against a throwaway local database. `npm run db:push` diffs
+`src/db/schema.ts` against the live schema rather than replaying files,
+so it won't re-run old migrations either. Never point
+`drizzle-kit migrate` at production: with no tracking table it would
+start again from 0000 (it runs in one transaction, so it would fail and
+roll back on the first `CREATE TYPE`).
 
 ## Stack
 

@@ -8,8 +8,12 @@ import {
   jsonb,
   boolean,
   uniqueIndex,
+  index,
+  check,
+  smallint,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import { ASSET_CONFIDENCES, ASSET_MOUNTINGS, ASSET_ROOMS, ASSET_SETTINGS } from "./asset-vocab";
 
 // Enums — see docs/PHASE_0_PLAN.md §4 for the schema this implements.
 
@@ -203,15 +207,54 @@ export const contentAssets = pgTable("content_assets", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-export const assetLibrary = pgTable("asset_library", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  fileUrl: text("file_url").notNull(),
-  tags: text("tags").array().notNull().default([]),
-  source: librarySourceEnum("source").notNull(),
-  shopifyProductId: text("shopify_product_id"),
-  uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
-  notes: text("notes"),
-});
+const sqlList = (values: readonly string[]) => sql.raw(values.map((v) => `'${v}'`).join(", "));
+
+// Everything from `setting` down is the per-image visual tagging added in
+// migration 0008, all nullable: null means "not tagged yet". Bots that need
+// a photo customers can picture in their own home should filter on
+// setting = 'installed' (and featured_ok for blog hero images).
+export const assetLibrary = pgTable(
+  "asset_library",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    fileUrl: text("file_url").notNull(),
+    tags: text("tags").array().notNull().default([]),
+    source: librarySourceEnum("source").notNull(),
+    shopifyProductId: text("shopify_product_id"),
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull().defaultNow(),
+    notes: text("notes"),
+    shopifyImageId: text("shopify_image_id"),
+    setting: text("setting"),
+    room: text("room"),
+    mounting: text("mounting"),
+    brand: text("brand"),
+    productName: text("product_name"),
+    style: text("style"),
+    colors: text("colors").array(),
+    quality: smallint("quality"),
+    widthPx: integer("width_px"),
+    heightPx: integer("height_px"),
+    featuredOk: boolean("featured_ok"),
+    altText: text("alt_text"),
+    confidence: text("confidence"),
+    taggedAt: timestamp("tagged_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("asset_library_shopify_image_id_unique")
+      .on(table.shopifyImageId)
+      .where(sql`${table.shopifyImageId} is not null`),
+    index("asset_library_setting_room_idx").on(table.setting, table.room),
+    check("asset_library_setting_check", sql`${table.setting} in (${sqlList(ASSET_SETTINGS)})`),
+    check("asset_library_room_check", sql`${table.room} in (${sqlList(ASSET_ROOMS)})`),
+    check("asset_library_mounting_check", sql`${table.mounting} in (${sqlList(ASSET_MOUNTINGS)})`),
+    check("asset_library_confidence_check", sql`${table.confidence} in (${sqlList(ASSET_CONFIDENCES)})`),
+    check("asset_library_quality_check", sql`${table.quality} between 1 and 5`),
+    check(
+      "asset_library_featured_ok_check",
+      sql`${table.featuredOk} is not true or (${table.setting} = 'installed' and ${table.quality} >= 4 and ${table.widthPx} >= 800)`,
+    ),
+  ],
+);
 
 export const publishTargets = pgTable("publish_targets", {
   id: uuid("id").primaryKey().defaultRandom(),

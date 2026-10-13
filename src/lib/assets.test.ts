@@ -1,11 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  chooseAssets,
   dedupeById,
+  describeCandidate,
   filterUnderReuseCap,
+  isPostableAsset,
   normalizeSemanticMatchInput,
-  pickFallbackAsset,
   rankAssetsByScore,
+  rankInstalledCandidates,
   scoreAssetMatch,
 } from "./assets";
 
@@ -90,49 +93,6 @@ test("dedupeById keeps first occurrence and drops later duplicates", () => {
   );
 });
 
-test("pickFallbackAsset prefers an asset not used in the recent window", () => {
-  const candidates = [{ id: "recent" }, { id: "fresh" }, { id: "also-fresh" }];
-  const recentlyUsed = new Set(["recent"]);
-  assert.equal(pickFallbackAsset(candidates, recentlyUsed).id, "fresh");
-});
-
-test("pickFallbackAsset still returns something when every candidate was used recently", () => {
-  const candidates = [{ id: "a" }, { id: "b" }];
-  const recentlyUsed = new Set(["a", "b"]);
-  assert.equal(pickFallbackAsset(candidates, recentlyUsed).id, "a");
-});
-
-test("pickFallbackAsset prefers word overlap with the article over blind recency", () => {
-  // Reproduces the real production case: every topically relevant asset
-  // was within the recency window, so the old pure-recency fallback
-  // handed an unrelated accessory photo to an "Electric Fireplace
-  // Insert" article instead.
-  const candidates = [
-    { id: "trim-kit", tags: ["Amantii", "Electric Fireplace Accessory"], notes: "Trim Kit" },
-    { id: "insert-photo", tags: ["Remii", "Electric Fireplace Insert"], notes: "Heritage Classic installed" },
-  ];
-  const recentlyUsed = new Set(["insert-photo"]); // the relevant one is "used up"
-  const article = { title: "Electric vs Wood-Burning Fireplace Inserts", tags: [] };
-  assert.equal(pickFallbackAsset(candidates, recentlyUsed, article).id, "insert-photo");
-});
-
-test("pickFallbackAsset falls back to pure recency when nothing overlaps the article at all", () => {
-  const candidates = [{ id: "a", tags: ["Outdoor"], notes: null }, { id: "b", tags: ["Wall-Mount"], notes: null }];
-  const recentlyUsed = new Set(["a"]);
-  const article = { title: "Choosing a Mantel Style", tags: [] };
-  assert.equal(pickFallbackAsset(candidates, recentlyUsed, article).id, "b");
-});
-
-test("pickFallbackAsset breaks a relevance tie toward the not-recently-used candidate", () => {
-  const candidates = [
-    { id: "used", tags: ["Electric Fireplace Insert"], notes: null },
-    { id: "fresh", tags: ["Electric Fireplace Insert"], notes: null },
-  ];
-  const recentlyUsed = new Set(["used"]);
-  const article = { title: "Electric Fireplace Insert Buying Guide", tags: [] };
-  assert.equal(pickFallbackAsset(candidates, recentlyUsed, article).id, "fresh");
-});
-
 test("filterUnderReuseCap excludes an asset that's hit the cap", () => {
   const candidates = [{ id: "overused" }, { id: "under-cap" }];
   const usageCounts = new Map([["overused", 3]]);
@@ -189,4 +149,109 @@ test("normalizeSemanticMatchInput coerces a newline-joined matchedAssetIds strin
 test("normalizeSemanticMatchInput defaults a non-string, non-array matchedAssetIds (e.g. null) to an empty array", () => {
   const normalized = normalizeSemanticMatchInput({ reasoning: "x", matchedAssetIds: null });
   assert.deepEqual(normalized, { reasoning: "x", matchedAssetIds: [] });
+});
+
+type Row = { id: string; tags: string[]; setting: string | null; featuredOk: boolean | null; quality: number | null };
+
+const article = { title: "Electric fireplace inserts for a living room", tags: ["insert", "living-room"] };
+
+// A semantic matcher that "picks" every candidate it's shown — the worst
+// case, standing in for a model that ignores the installed-only rule.
+const pickEverything = async (_a: unknown, candidates: Row[], limit: number) => candidates.slice(0, limit);
+
+const noUsage = { recentlyUsed: new Set<string>(), usageCounts: new Map<string, number>() };
+
+const productOnly: Row = { id: "product", tags: ["insert", "living-room"], setting: "product_only", featuredOk: false, quality: 5 };
+const render: Row = { id: "render", tags: ["insert", "living-room"], setting: "render", featuredOk: false, quality: 5 };
+const untagged: Row = { id: "untagged", tags: ["insert", "living-room"], setting: null, featuredOk: null, quality: null };
+const installed: Row = { id: "installed", tags: [], setting: "installed", featuredOk: true, quality: 4 };
+
+for (const row of [productOnly, render, untagged]) {
+  test(`chooseAssets never returns a ${row.id} row when it is the only row`, async () => {
+    assert.deepEqual(await chooseAssets([row], article, 3, { ...noUsage, semantic: pickEverything }), []);
+  });
+
+  test(`chooseAssets never returns a ${row.id} row even as the best tag match`, async () => {
+    // `row` shares both article tags; the installed photo shares none.
+    const picked = await chooseAssets([row, installed], article, 3, { ...noUsage, semantic: pickEverything });
+    assert.deepEqual(
+      picked.map((r) => r.id),
+      ["installed"],
+    );
+  });
+
+  test(`chooseAssets drops a ${row.id} row even if the semantic matcher returns it`, async () => {
+    const rogue = async () => [row, installed];
+    const picked = await chooseAssets([row, installed], { ...article, tags: [] }, 3, { ...noUsage, semantic: rogue });
+    assert.deepEqual(
+      picked.map((r) => r.id),
+      ["installed"],
+    );
+  });
+}
+
+test("chooseAssets returns [] (no fallback pick) when no installed photo matches", async () => {
+  const noMatch = async () => [];
+  const picked = await chooseAssets([installed, productOnly], { ...article, tags: [] }, 1, { ...noUsage, semantic: noMatch });
+  assert.deepEqual(picked, []);
+});
+
+test("chooseAssets prefers an installed photo not used recently", async () => {
+  const other: Row = { ...installed, id: "other-installed" };
+  const picked = await chooseAssets([installed, other], { ...article, tags: [] }, 1, {
+    recentlyUsed: new Set(["installed"]),
+    usageCounts: new Map([["installed", 1]]),
+    semantic: pickEverything,
+  });
+  assert.deepEqual(
+    picked.map((r) => r.id),
+    ["other-installed"],
+  );
+});
+
+test("isPostableAsset accepts only setting = installed", () => {
+  for (const setting of ["product_only", "render", "detail", "diagram", "other", null, undefined, ""]) {
+    assert.equal(isPostableAsset({ setting }), false, String(setting));
+  }
+  assert.equal(isPostableAsset({ setting: "installed" }), true);
+});
+
+test("rankInstalledCandidates keeps only installed rows, featured_ok first, then by quality", () => {
+  const rows: Row[] = [
+    untagged,
+    productOnly,
+    render,
+    { id: "installed-q3", tags: [], setting: "installed", featuredOk: false, quality: 3 },
+    { id: "installed-q5-unfeatured", tags: [], setting: "installed", featuredOk: false, quality: 5 },
+    { id: "featured-q4", tags: [], setting: "installed", featuredOk: true, quality: 4 },
+    { id: "featured-q5", tags: [], setting: "installed", featuredOk: true, quality: 5 },
+  ];
+  assert.deepEqual(
+    rankInstalledCandidates(rows).map((r) => r.id),
+    ["featured-q5", "featured-q4", "installed-q5-unfeatured", "installed-q3"],
+  );
+});
+
+test("rankInstalledCandidates keeps input order for equal featured_ok and quality", () => {
+  const rows: Row[] = [
+    { id: "a", tags: [], setting: "installed", featuredOk: true, quality: 4 },
+    { id: "b", tags: [], setting: "installed", featuredOk: true, quality: 4 },
+  ];
+  assert.deepEqual(
+    rankInstalledCandidates(rows).map((r) => r.id),
+    ["a", "b"],
+  );
+});
+
+test("describeCandidate lists room, mounting, brand, tags and alt text", () => {
+  const row = {
+    id: "x",
+    tags: [],
+    room: "bedroom",
+    mounting: "built_in",
+    brand: "Modern Flames",
+    altText: "Linear fireplace in a stone column",
+  };
+  assert.equal(describeCandidate(row), "x: bedroom, built_in, Modern Flames — Linear fireplace in a stone column");
+  assert.equal(describeCandidate({ ...row, tags: ["linear"] }), "x: bedroom, built_in, Modern Flames [linear] — Linear fireplace in a stone column");
 });

@@ -281,3 +281,12 @@ section { margin-bottom: 40px; }
 }
 .sent-note { font-size: 13px; color: #2d6a3e; }
 .shipped-orders { margin-top: 24px; }
+.asset-filters {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  margin: 16px 0;
+}
+.asset-filters label { display: flex; flex-direction: column; font-size: 13px; gap: 4px; }
+.asset-filters select { font: inherit; padding: 4px 6px; }
+.asset-tagging { font-size: 12px; font-weight: 600; margin: 0 0 6px; }
