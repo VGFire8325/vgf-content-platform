@@ -250,6 +250,7 @@ async function main() {
     fileUrl: testPhotoDataUri,
     tags: ["test"], // overlaps the article's "test" tag from step 1
     source: "manual_upload",
+    setting: "installed", // only installed-in-a-room photos are ever selected (src/lib/assets.ts)
   });
 
   await enqueueJob(db, "render_image", { contentItemId: item.id });

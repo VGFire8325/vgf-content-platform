@@ -47,7 +47,10 @@ function ImageSection({ item, asset }: { item: ContentItemRow; asset: ContentAss
         <img src={asset.fileUrl} alt="" className="pin-thumb" />
       ) : asset?.status === "needs_asset" ? (
         <div className="needs-asset">
-          No approved photo in the library at all — upload one in the Asset Library, then regenerate.
+          No installed-in-a-room photo matches this article.{" "}
+          {item.contentType === "linkedin_post"
+            ? "The post will go out as a plain link card with no image."
+            : "A pin can't publish without an image: add or tag a matching installed photo, then regenerate."}
         </div>
       ) : (
         <div className="needs-asset">Image queued for rendering.</div>

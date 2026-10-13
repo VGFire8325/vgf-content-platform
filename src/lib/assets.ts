@@ -1,10 +1,9 @@
-import { and, desc, gt, isNotNull } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull } from "drizzle-orm";
 import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import type { db as DbClient } from "@/db/client";
 import { assetLibrary, contentAssets } from "@/db/schema";
 import { BRAND_CORE, callStructuredTool } from "./anthropic";
-import { optionalEnvBool } from "./env";
 
 // The blog's entire content taxonomy (confirmed against production:
 // `SELECT DISTINCT unnest(tags) FROM articles` never returns anything
@@ -58,58 +57,48 @@ export function rankAssetsByScore<T extends { tags: string[] }>(candidates: T[],
 
 type AssetRow = typeof assetLibrary.$inferSelect;
 
-// Off by default. The per-image visual tags from migration 0008 (setting,
-// room, alt_text, ...) are now filled in for every row, and the library
-// grew from 108 to 760 rows, most of them with an empty `tags` array, so
-// the semantic pass below would otherwise be sent every row. With this on,
-// the candidate pool drops renders/diagrams/details, puts real installed
-// photos ahead of plain product shots, describes each candidate by its
-// visual tags, and caps what the semantic pass sees. Left off until it has
-// been checked against real articles.
-export function useVisualTagMatching(): boolean {
-  return optionalEnvBool("ASSET_MATCH_USE_TAGS", false);
+// Owner rule: Pinterest, Instagram, LinkedIn and blog images are only ever
+// photos of a fireplace installed in a real room (setting = 'installed',
+// from the per-image tagging in migration 0008). product_only, render,
+// detail, diagram, other and not-yet-tagged rows are never candidates, no
+// matter how well their tags or notes match an article. Enforced both in
+// the query (loadCandidates) and again on the way out (chooseAssets), so a
+// future change to one can't quietly let other rows through.
+export function isPostableAsset(asset: { setting?: string | null }): boolean {
+  return asset.setting === "installed";
 }
 
-// Semantic-pass prompt size limit when visual-tag matching is on — the
-// pool is pre-ranked by tagRank, so the cut drops the weakest photos.
+// Upper bound on what the semantic pass is shown, to keep the prompt a
+// sane size; the pool is ranked first, so the cut drops the weakest photos.
 export const SEMANTIC_CANDIDATE_CAP = 200;
 
-type TaggedFields = { setting?: string | null; featuredOk?: boolean | null; quality?: number | null };
+type RankFields = { setting?: string | null; featuredOk?: boolean | null; quality?: number | null };
 
-// Untagged rows (setting null) are kept so a newly added photo isn't
-// invisible before it's been tagged; they rank last.
-const MATCHABLE_SETTINGS = new Set(["installed", "product_only"]);
-
-function tagRank(asset: TaggedFields): number {
-  if (asset.setting === "installed") return asset.featuredOk ? 0 : 1;
-  if (asset.setting === "product_only") return 2;
-  return 3;
-}
-
-// Pure: filters to matchable settings and orders featured installed photos
-// first, then other installed photos, product-only shots, and untagged rows,
-// higher quality first within each group. Stable otherwise, so the caller's
-// newest-first order still breaks ties.
-export function rankTaggedCandidates<T extends TaggedFields>(candidates: T[]): T[] {
+// Pure: keeps only installed photos, featured_ok first, then by quality
+// (highest first). Stable otherwise, so the caller's newest-first order
+// still breaks ties.
+export function rankInstalledCandidates<T extends RankFields>(candidates: T[]): T[] {
   return candidates
-    .filter((c) => c.setting == null || MATCHABLE_SETTINGS.has(c.setting))
+    .filter(isPostableAsset)
     .map((c, i) => ({ c, i }))
-    .sort((a, b) => tagRank(a.c) - tagRank(b.c) || (b.c.quality ?? 0) - (a.c.quality ?? 0) || a.i - b.i)
+    .sort(
+      (a, b) =>
+        Number(Boolean(b.c.featuredOk)) - Number(Boolean(a.c.featuredOk)) ||
+        (b.c.quality ?? 0) - (a.c.quality ?? 0) ||
+        a.i - b.i,
+    )
     .map(({ c }) => c);
 }
 
-// One prompt line per candidate. With visual tags, a photo is described by
-// what's actually in it rather than by its (often empty) Shopify tags.
+// One prompt line per candidate, describing the photo by what's actually
+// in it (room, mounting, brand, alt text) rather than by its Shopify tags,
+// which are empty on most rows.
 export function describeCandidate(
-  c: Pick<AssetRow, "id" | "tags" | "notes"> &
-    Partial<Pick<AssetRow, "setting" | "room" | "mounting" | "productName" | "altText">>,
-  withVisualTags: boolean,
+  c: Pick<AssetRow, "id" | "tags"> & Partial<Pick<AssetRow, "room" | "mounting" | "brand" | "altText">>,
 ): string {
-  const base = `${c.id}: [${c.tags.join(", ")}]`;
-  if (!withVisualTags || !c.setting) return `${base}${c.notes ? ` — ${c.notes}` : ""}`;
-  const visual = [c.setting, c.room, c.mounting].filter(Boolean).join("/");
-  const product = c.productName ? ` (${c.productName})` : "";
-  return `${base} ${visual}${product}${c.altText ? ` — ${c.altText}` : ""}`;
+  const fields = [c.room, c.mounting, c.brand].filter(Boolean).join(", ");
+  const tags = c.tags.length ? ` [${c.tags.join(", ")}]` : "";
+  return `${c.id}: ${fields || "(untagged)"}${tags}${c.altText ? ` — ${c.altText}` : ""}`;
 }
 
 // What the semantic fallback needs to judge topical fit — article tags
@@ -167,7 +156,7 @@ const SEMANTIC_MATCH_TOOL: Anthropic.Tool = {
       reasoning: {
         type: "string",
         description:
-          "Briefly note which candidates you considered relevant and why, before deciding. For a how-to/process article with no process photography available, a representative product photo of the article's core subject is an acceptable illustration — say so explicitly if that's the case here.",
+          "Briefly note which candidates you considered relevant and why, before deciding. For a how-to/process article with no process photography available, a photo of the article's core subject installed in a room is an acceptable illustration — say so explicitly if that's the case here.",
       },
       matchedAssetIds: { type: "array", items: { type: "string" } },
     },
@@ -177,42 +166,39 @@ const SEMANTIC_MATCH_TOOL: Anthropic.Tool = {
 
 // Runs whenever exact tag overlap finds nothing — given the vocabulary
 // mismatch described above, that's the common case, not a rare
-// fallback. All candidates go in one call rather than being capped or
-// pre-filtered; fine at the library's current size (~100s of assets),
-// would need capping or a cheaper embedding-based pass first if it grows
-// into the thousands.
+// fallback. Sees at most SEMANTIC_CANDIDATE_CAP candidates.
 async function matchAssetsSemantic(
   client: Anthropic,
   article: ArticleMatchContext,
   allCandidates: AssetRow[],
   limit: number,
 ): Promise<AssetRow[]> {
-  const withVisualTags = useVisualTagMatching();
-  const candidates = withVisualTags ? allCandidates.slice(0, SEMANTIC_CANDIDATE_CAP) : allCandidates;
+  const candidates = allCandidates.slice(0, SEMANTIC_CANDIDATE_CAP);
   const system = `${BRAND_CORE}
 
-You are picking product/lifestyle photos from an approved library to
-illustrate a blog article's social posts. Match on topic and visual
-relevance (product type, installation style, room or setting), not
+You are picking photos from an approved library to illustrate a blog
+article's social posts. Every photo shows an electric fireplace installed
+in a real room. Match on topic and visual relevance (room, mounting or
+installation style, brand, what the photo shows), not
 literal string overlap with any tag. Only include a photo if a reader
 would recognize it as actually illustrating this article — an unrelated
 product from the same brand, or a photo that only loosely fits, is not
 a match. If nothing in the library is a reasonable fit, return an empty
 list; never force a mismatched pick.
 
-The library only has product/lifestyle photos, never step-by-step or
+The library only has finished-room photos, never step-by-step or
 process shots. For a how-to or installation-process article, don't hold
 out for photography that doesn't exist — a clear photo of the article's
-core subject (e.g. an insert product photo for an article about framing
-an insert) is a legitimate illustration on its own.`;
+core subject installed in a room (e.g. an installed insert for an article
+about framing an insert) is a legitimate illustration on its own.`;
 
   const userContent = `Article title: ${article.title}
 ${article.coreSubject ? `Core subject: ${article.coreSubject}\n` : ""}${
     article.keyTakeaways?.length ? `Key takeaways:\n${article.keyTakeaways.map((t) => `- ${t}`).join("\n")}\n` : ""
   }Article tags: ${article.tags.join(", ") || "(none)"}
 
-Available photos (${withVisualTags ? "id: tags setting/room/mounting (product) — description" : "id: tags — notes"}):
-${candidates.map((c) => describeCandidate(c, withVisualTags)).join("\n")}
+Available photos (id: room, mounting, brand [tags] — description):
+${candidates.map((c) => describeCandidate(c)).join("\n")}
 
 Pick up to ${limit} best-fitting photo id(s), ordered best first.`;
 
@@ -289,17 +275,19 @@ export function filterUnderReuseCap<T extends { id: string }>(
   return underCap.length > 0 ? underCap : candidates;
 }
 
+type SemanticMatcher<T> = (article: ArticleMatchContext, candidates: T[], limit: number) => Promise<T[]>;
+
 // Exact overlap, then the semantic pass, against a single candidate pool.
-async function bestMatches(
-  client: Anthropic,
+async function bestMatches<T extends { tags: string[] }>(
+  semantic: SemanticMatcher<T>,
   article: ArticleMatchContext,
-  pool: AssetRow[],
+  pool: T[],
   limit: number,
-): Promise<AssetRow[]> {
+): Promise<T[]> {
   if (pool.length === 0) return [];
   const exact = rankAssetsByScore(pool, article.tags);
   if (exact.length > 0) return exact.slice(0, limit);
-  return matchAssetsSemantic(client, article, pool, limit);
+  return semantic(article, pool, limit);
 }
 
 export function dedupeById<T extends { id: string }>(items: T[]): T[] {
@@ -314,19 +302,7 @@ export function dedupeById<T extends { id: string }>(items: T[]): T[] {
   return out;
 }
 
-// Cheap, free-text relevance signal for the last-resort fallback below —
-// deliberately not another model call, since this only runs after the
-// semantic pass has already looked and found nothing. It only needs to
-// beat "pick something blind," not find a good match on its own: a
-// real production case had all 7 "Electric Fireplace Insert"-tagged
-// photos excluded as recently-used, and the semantic pass came up empty
-// against what was left (the generated imageConcept asked for a
-// wood-burning side the library has no photos of at all, since this is
-// an electric-fireplace retailer) — so the old fallback handed a
-// completely unrelated "Electric Fireplace Accessory" trim-kit photo to
-// an article about choosing between insert types. Word overlap between
-// the article's own text and an asset's tags/notes would have caught
-// "insert" on both sides.
+// Word set for free-text overlap checks (used by pinterest-quality.ts).
 export function tokenize(text: string): Set<string> {
   return new Set(
     text
@@ -336,121 +312,77 @@ export function tokenize(text: string): Set<string> {
   );
 }
 
-function articleWords(article: ArticleMatchContext): Set<string> {
-  return tokenize([article.title, article.coreSubject, ...(article.keyTakeaways ?? [])].filter(Boolean).join(" "));
-}
-
-// Prefix match either direction, not exact-equality — plain tokenizing
-// would otherwise miss "inserts" (article) against "insert" (asset tag)
-// over a plural/singular difference alone.
-function wordOverlapScore(assetText: string, articleWordSet: Set<string>): number {
-  const assetWords = tokenize(assetText);
-  let score = 0;
-  for (const articleWord of articleWordSet) {
-    for (const assetWord of assetWords) {
-      if (articleWord.startsWith(assetWord) || assetWord.startsWith(articleWord)) {
-        score++;
-        break;
-      }
-    }
-  }
-  return score;
-}
-
-// Last-resort pick when neither matching pass finds even a loose fit.
-// `candidates` must be non-empty. With `article` given, first prefers
-// the candidate with the best tag/notes word-overlap against the
-// article's own text — ties broken toward not-recently-used — and only
-// drops to pure recency (prefers an asset not used in the recent
-// window, falling back to the newest asset on file otherwise) when
-// nothing overlaps at all. Pure so it's cheap to unit test against the
-// recency and relevance rules directly.
-export function pickFallbackAsset<T extends { id: string; tags?: string[]; notes?: string | null }>(
-  candidates: T[],
-  recentlyUsed: Set<string>,
-  article?: ArticleMatchContext,
-): T {
-  if (article) {
-    const words = articleWords(article);
-    const scored = candidates
-      .map((c) => ({ c, score: wordOverlapScore([...(c.tags ?? []), c.notes ?? ""].join(" "), words) }))
-      .filter(({ score }) => score > 0)
-      .sort((a, b) => {
-        if (b.score !== a.score) return b.score - a.score;
-        return Number(recentlyUsed.has(a.c.id)) - Number(recentlyUsed.has(b.c.id));
-      });
-    if (scored.length > 0) return scored[0]!.c;
-  }
-
-  const fresh = candidates.find((c) => !recentlyUsed.has(c.id));
-  return fresh ?? candidates[0]!;
-}
-
-// Newest first; with visual-tag matching on, filtered and re-ranked by
-// rankTaggedCandidates (falling back to the full library if that leaves
-// nothing, so the "always a photo" guarantee below still holds).
+// Installed photos only (see isPostableAsset), newest first, then ranked
+// by rankInstalledCandidates.
 async function loadCandidates(db: typeof DbClient): Promise<AssetRow[]> {
-  const rows = await db.select().from(assetLibrary).orderBy(desc(assetLibrary.uploadedAt));
-  if (!useVisualTagMatching()) return rows;
-  const ranked = rankTaggedCandidates(rows);
-  return ranked.length > 0 ? ranked : rows;
+  const rows = await db
+    .select()
+    .from(assetLibrary)
+    .where(eq(assetLibrary.setting, "installed"))
+    .orderBy(desc(assetLibrary.uploadedAt));
+  return rankInstalledCandidates(rows);
 }
 
-// Only an empty library returns null — every other case is guaranteed a
-// photo. A post going out with no image at all is worse than one with an
-// imperfect image, so "no confident match" falls back through
-// progressively looser pools (recently-used assets excluded, then
-// allowed back in, then just the newest asset on file) instead of
-// leaving the item at needs_asset. Exact tag overlap is tried first —
-// free, instant, and the right answer whenever an asset really was
-// tagged to match — before the semantic pass.
+type MatchableAsset = RankFields & { id: string; tags: string[] };
+
+// The whole selection policy, minus I/O — pure apart from the injected
+// semantic matcher, so the installed-only rule is unit-testable without a
+// database or a model call. Filters to installed photos itself (whatever
+// the caller passed), tries photos not used in the recent window first,
+// then any under the reuse cap, and returns [] when nothing matches. There
+// is deliberately no "pick something anyway" fallback: a post with no
+// photo beats a post with the wrong kind of photo.
+export async function chooseAssets<T extends MatchableAsset>(
+  rows: T[],
+  article: ArticleMatchContext,
+  limit: number,
+  opts: { recentlyUsed: Set<string>; usageCounts: Map<string, number>; semantic: SemanticMatcher<T> },
+): Promise<T[]> {
+  const candidates = filterUnderReuseCap(rankInstalledCandidates(rows), opts.usageCounts);
+  if (candidates.length === 0) return [];
+  const fresh = candidates.filter((c) => !opts.recentlyUsed.has(c.id));
+
+  const freshMatches = await bestMatches(opts.semantic, article, fresh, limit);
+  const anyMatches = freshMatches.length >= limit ? [] : await bestMatches(opts.semantic, article, candidates, limit);
+  const candidateIds = new Set(candidates.map((c) => c.id));
+  return dedupeById([...freshMatches, ...anyMatches])
+    .filter((a) => candidateIds.has(a.id) && isPostableAsset(a))
+    .slice(0, limit);
+}
+
+async function selectionOptions(db: typeof DbClient, client: Anthropic) {
+  return {
+    recentlyUsed: await recentlyUsedAssetIds(db, RECENT_ASSET_WINDOW_DAYS),
+    usageCounts: await assetUsageCounts(db, RECENT_ASSET_WINDOW_DAYS),
+    semantic: (article: ArticleMatchContext, candidates: AssetRow[], limit: number) =>
+      matchAssetsSemantic(client, article, candidates, limit),
+  };
+}
+
+// Returns null when no installed photo matches the article (or the library
+// has none). Callers record that as needs_asset; see app/api/cron/run-jobs.
 export async function selectAssetForArticle(
   db: typeof DbClient,
   client: Anthropic,
   article: ArticleMatchContext,
 ): Promise<AssetRow | null> {
-  const allCandidates = await loadCandidates(db);
-  if (allCandidates.length === 0) return null;
-
-  const recentlyUsed = await recentlyUsedAssetIds(db, RECENT_ASSET_WINDOW_DAYS);
-  const usageCounts = await assetUsageCounts(db, RECENT_ASSET_WINDOW_DAYS);
-  const candidates = filterUnderReuseCap(allCandidates, usageCounts);
-  const fresh = candidates.filter((c) => !recentlyUsed.has(c.id));
-
-  const [freshMatch] = await bestMatches(client, article, fresh, 1);
-  if (freshMatch) return freshMatch;
-
-  const [anyMatch] = await bestMatches(client, article, candidates, 1);
-  if (anyMatch) return anyMatch;
-
-  return pickFallbackAsset(candidates, recentlyUsed, article);
+  const rows = await loadCandidates(db);
+  if (rows.length === 0) return null;
+  const [match] = await chooseAssets(rows, article, 1, await selectionOptions(db, client));
+  return match ?? null;
 }
 
 // Returns up to `limit` distinct matches (best first) instead of one —
 // used by the Instagram carousel renderer so slides don't all reuse the
-// same single photo. Only an empty library returns fewer than `limit`
-// (down to []); callers cycle through what's returned rather than
-// treating a short list as an error.
+// same single photo. Returns [] when no installed photo matches; callers
+// cycle through a short list rather than treating it as an error.
 export async function selectAssetsForArticle(
   db: typeof DbClient,
   client: Anthropic,
   article: ArticleMatchContext,
   limit: number,
 ): Promise<AssetRow[]> {
-  const allCandidates = await loadCandidates(db);
-  if (allCandidates.length === 0) return [];
-
-  const recentlyUsed = await recentlyUsedAssetIds(db, RECENT_ASSET_WINDOW_DAYS);
-  const usageCounts = await assetUsageCounts(db, RECENT_ASSET_WINDOW_DAYS);
-  const candidates = filterUnderReuseCap(allCandidates, usageCounts);
-  const fresh = candidates.filter((c) => !recentlyUsed.has(c.id));
-
-  const freshMatches = await bestMatches(client, article, fresh, limit);
-  if (freshMatches.length >= limit) return freshMatches;
-
-  const anyMatches = await bestMatches(client, article, candidates, limit);
-  const merged = dedupeById([...freshMatches, ...anyMatches]).slice(0, limit);
-  if (merged.length > 0) return merged;
-
-  return [pickFallbackAsset(candidates, recentlyUsed, article)];
+  const rows = await loadCandidates(db);
+  if (rows.length === 0) return [];
+  return chooseAssets(rows, article, limit, await selectionOptions(db, client));
 }
