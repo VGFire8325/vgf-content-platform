@@ -51,13 +51,37 @@
 "178": "features graphic",
 "179": "flame colors infographic",
 "206": "flame colors graphic",
+"211": "3D room render",
+"212": "3D room render",
+"213": "3D room render",
+"214": "3D room render",
+"215": "3D room render",
+"216": "3D room render",
+"217": "3D room render",
+"218": "3D room render",
+"219": "3D room render",
 "227": "brochure page",
 "246": "brochure page",
 "280": "brochure page",
+"281": "3D room render",
+"282": "3D room render",
+"283": "3D room render",
 "289": "brochure page",
 "321": "brochure page",
+"324": "3D room render",
+"325": "3D room render",
+"327": "3D room render",
+"330": "3D room render",
+"331": "3D room render",
+"336": "3D room render",
+"338": "3D room render",
+"339": "3D room render",
+"343": "3D room render",
 "344": "brochure page",
+"356": "3D room render",
+"357": "3D room render",
 "369": "brochure page",
+"376": "3D room render",
 "380": "brochure page",
 "426": "installation options graphic",
 "436": "looks AI-generated",
@@ -512,15 +536,15 @@
 "209": "diagram",
 "21": "product_only",
 "210": "diagram",
-"211": "installed",
-"212": "installed",
-"213": "installed",
-"214": "installed",
-"215": "installed",
-"216": "installed",
-"217": "installed",
-"218": "installed",
-"219": "installed",
+"211": "render",
+"212": "render",
+"213": "render",
+"214": "render",
+"215": "render",
+"216": "render",
+"217": "render",
+"218": "render",
+"219": "render",
 "22": "product_only",
 "220": "product_only",
 "221": "product_only",
@@ -583,9 +607,9 @@
 "279": "detail",
 "28": "product_only",
 "280": "other",
-"281": "installed",
-"282": "installed",
-"283": "installed",
+"281": "render",
+"282": "render",
+"283": "render",
 "284": "installed",
 "285": "installed",
 "286": "installed",
@@ -628,28 +652,28 @@
 "321": "other",
 "322": "installed",
 "323": "installed",
-"324": "installed",
-"325": "installed",
+"324": "render",
+"325": "render",
 "326": "installed",
-"327": "installed",
+"327": "render",
 "328": "installed",
 "329": "installed",
 "33": "installed",
-"330": "installed",
-"331": "installed",
+"330": "render",
+"331": "render",
 "332": "installed",
 "333": "installed",
 "334": "installed",
 "335": "installed",
-"336": "installed",
+"336": "render",
 "337": "installed",
-"338": "installed",
-"339": "installed",
+"338": "render",
+"339": "render",
 "34": "installed",
 "340": "installed",
 "341": "installed",
 "342": "installed",
-"343": "installed",
+"343": "render",
 "344": "other",
 "345": "product_only",
 "346": "product_only",
@@ -661,8 +685,8 @@
 "353": "product_only",
 "354": "installed",
 "355": "installed",
-"356": "installed",
-"357": "installed",
+"356": "render",
+"357": "render",
 "358": "installed",
 "359": "installed",
 "36": "product_only",
@@ -682,7 +706,7 @@
 "373": "detail",
 "374": "detail",
 "375": "detail",
-"376": "installed",
+"376": "render",
 "377": "installed",
 "378": "product_only",
 "379": "product_only",
@@ -1248,6 +1272,1931 @@
 "997": "installed",
 "999": "installed"
 },
-"pass2": {},
-"updated": "2026-10-13T09:11:12.441656+00:00"
+"pass2": {
+"0": {
+"alt_text": "Black wall-mounted electric fireplace above a cozy bedroom seating area where a woman reads in an orange armchair beside the bed.",
+"colors": [
+"white walls",
+"beige curtains",
+"orange accents",
+"wood",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "wall_mounted",
+"quality": 4,
+"room": "bedroom",
+"style": "scandinavian"
+},
+"1": {
+"alt_text": "Long black wall-mounted electric fireplace above a white armchair, round wood coffee table and plants in a light living room.",
+"colors": [
+"cream walls",
+"white",
+"green plants",
+"natural wood",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "wall_mounted",
+"quality": 5,
+"room": "living_room",
+"style": "modern minimalist"
+},
+"100": {
+"alt_text": "Long linear electric fireplace in a fieldstone surround in a pine-ceilinged room open to trees at dusk.",
+"colors": [
+"fieldstone surround",
+"pine ceiling",
+"dusk trees",
+"orange flame"
+],
+"confidence": "low",
+"mounting": "built_in",
+"quality": 4,
+"room": "patio_outdoor",
+"style": "rustic lodge"
+},
+"101": {
+"alt_text": "Linear electric fireplace set into a tall stacked-stone wall above black gloss cabinets and a white sectional.",
+"colors": [
+"stacked stone feature wall",
+"black gloss cabinets",
+"white sofa",
+"dark wood floor",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "recessed",
+"quality": 4,
+"room": "living_room",
+"style": "contemporary"
+},
+"112": {
+"alt_text": "Electric fireplace insert built into a white wall with a reclaimed wood ledge in an attic bedroom with exposed beams.",
+"colors": [
+"white walls",
+"exposed wood beams",
+"reclaimed wood hearth",
+"white bedding",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 5,
+"room": "bedroom",
+"style": "scandinavian rustic"
+},
+"113": {
+"alt_text": "Electric firebox built into a white wall below a live-edge wood mantel shelf, with a stone bench in front.",
+"colors": [
+"white walls",
+"live-edge wood mantel",
+"stone bench",
+"black cabinet",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "rustic transitional"
+},
+"114": {
+"alt_text": "Electric fireplace in a stacked-stone surround with a wood mantel beside a leather recliner and hardwood floor.",
+"colors": [
+"stacked stone surround",
+"wood mantel",
+"cream walls",
+"leather recliner",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "rustic traditional"
+},
+"115": {
+"alt_text": "Electric fireplace in a carved cream stone mantel in a traditional living room with a dark wood coffee table.",
+"colors": [
+"cream stone mantel",
+"tan walls",
+"brown and gold decor",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "mantel_surround",
+"quality": 4,
+"room": "living_room",
+"style": "traditional"
+},
+"116": {
+"alt_text": "Electric fireplace in a grey stone surround between oak cabinets, facing two grey slipper chairs.",
+"colors": [
+"grey fieldstone surround",
+"oak cabinets",
+"grey walls",
+"blue and orange flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 5,
+"room": "living_room",
+"style": "transitional"
+},
+"136": {
+"alt_text": "Multi-sided electric fireplace with blue flames set into a grey marble surround between white built-in shelves.",
+"colors": [
+"grey marble surround",
+"white shelving",
+"black and white pillows",
+"blue flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 5,
+"room": "living_room",
+"style": "modern glam"
+},
+"137": {
+"alt_text": "Close view of a multi-sided electric fireplace in a travertine surround beside a white armchair.",
+"colors": [
+"travertine surround",
+"white walls",
+"white armchair",
+"yellow flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "modern"
+},
+"138": {
+"alt_text": "Linear electric fireplace in a grey tile surround under a dark wood mantel and round mirror in a bright living room.",
+"colors": [
+"grey tile surround",
+"dark wood mantel",
+"cream walls",
+"grey sofas",
+"yellow flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 5,
+"room": "living_room",
+"style": "transitional"
+},
+"139": {
+"alt_text": "Multi-sided electric fireplace in a travertine room-divider column below a TV, in a dim open-plan room.",
+"colors": [
+"travertine column",
+"dark slate floor",
+"TV",
+"warm yellow flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "other",
+"style": "moody modern"
+},
+"140": {
+"alt_text": "Very long linear electric fireplace below a TV on a walnut-paneled wall between wooden speakers in an open living room.",
+"colors": [
+"walnut panel wall",
+"dark stone",
+"yellow and grey rug",
+"yellow flame"
+],
+"confidence": "high",
+"mounting": "tv_wall",
+"quality": 5,
+"room": "living_room",
+"style": "mid-century modern"
+},
+"141": {
+"alt_text": "Linear electric fireplace built into a white wall above a floating white hearth, below a framed painting.",
+"colors": [
+"white walls",
+"white floating hearth",
+"framed art",
+"yellow flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "minimalist"
+},
+"142": {
+"alt_text": "Corner electric fireplace built in below a TV in a bright living room with a taupe sectional and garden view.",
+"colors": [
+"white walls",
+"taupe sofa",
+"glass tables",
+"grey curtains",
+"yellow flame"
+],
+"confidence": "high",
+"mounting": "tv_wall",
+"quality": 4,
+"room": "living_room",
+"style": "modern"
+},
+"143": {
+"alt_text": "Linear electric fireplace built into a white painted brick wall below a white mantel shelf with lanterns and a clock.",
+"colors": [
+"white painted brick",
+"white mantel shelf",
+"greenery",
+"light wood floor",
+"yellow flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "farmhouse"
+},
+"144": {
+"alt_text": "Multi-sided electric fireplace below a TV in a dark stone surround between walnut panels, facing two cream sofas.",
+"colors": [
+"walnut wall panels",
+"dark stone surround",
+"cream sofas",
+"yellow flame"
+],
+"confidence": "high",
+"mounting": "tv_wall",
+"quality": 4,
+"room": "living_room",
+"style": "modern luxury"
+},
+"155": {
+"alt_text": "Electric fireplace insert in a red brick chimney wall below a black mantel shelf, flanked by two glass doors.",
+"colors": [
+"red brick chimney",
+"black mantel shelf",
+"grey walls",
+"orange flame",
+"blue embers"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 5,
+"room": "living_room",
+"style": "transitional"
+},
+"156": {
+"alt_text": "Electric fireplace in a charcoal mantel against a white board-and-batten wall with grey chairs and plants.",
+"colors": [
+"white board-and-batten walls",
+"charcoal mantel",
+"grey furniture",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "mantel_surround",
+"quality": 4,
+"room": "living_room",
+"style": "modern farmhouse"
+},
+"157": {
+"alt_text": "Electric fireplace built into a light stone feature wall in an open living room with a grey sectional.",
+"colors": [
+"light grey stone wall",
+"grey sectional",
+"glass coffee table",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 3,
+"room": "living_room",
+"style": "contemporary"
+},
+"158": {
+"alt_text": "Electric fireplace in a white mantel between built-in shelves in a bright living room with a grey sectional.",
+"colors": [
+"white mantel and built-ins",
+"grey sectional",
+"dark wood floor",
+"yellow flame"
+],
+"confidence": "high",
+"mounting": "mantel_surround",
+"quality": 5,
+"room": "living_room",
+"style": "transitional"
+},
+"165": {
+"alt_text": "Linear electric fireplace recessed into a sage blue wall above a white low cabinet, beside a pale blue armchair.",
+"colors": [
+"sage blue wall",
+"white cabinets",
+"light blue armchair",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "recessed",
+"quality": 3,
+"room": "living_room",
+"style": "scandinavian"
+},
+"17": {
+"alt_text": "Linear electric fireplace recessed into a cream wall above a light blue sectional, with a dining area visible through a doorway.",
+"colors": [
+"cream walls",
+"grey",
+"light blue sofa",
+"herringbone wood floor",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "recessed",
+"quality": 5,
+"room": "living_room",
+"style": "contemporary"
+},
+"171": {
+"alt_text": "Linear electric fireplace in a white marble wall beside a decorated Christmas tree and wrapped gifts.",
+"colors": [
+"white marble surround",
+"brick wall",
+"Christmas tree",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 3,
+"room": "living_room",
+"style": "modern"
+},
+"172": {
+"alt_text": "Linear electric fireplace recessed into a grey wood-paneled wall beside a blue armchair.",
+"colors": [
+"grey wood-look wall panels",
+"wood slats",
+"blue armchair",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "recessed",
+"quality": 3,
+"room": "living_room",
+"style": "modern"
+},
+"173": {
+"alt_text": "Linear electric fireplace in a white surround in a traditional living room with an ornate brown sofa.",
+"colors": [
+"cream walls",
+"white surround",
+"carved brown sofa",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 3,
+"room": "living_room",
+"style": "traditional"
+},
+"174": {
+"alt_text": "Linear electric fireplace below a TV on a textured stone wall in a living room opening to a garden and sea view.",
+"colors": [
+"textured white stone wall",
+"wood beams",
+"orange sofa",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "tv_wall",
+"quality": 3,
+"room": "living_room",
+"style": "coastal contemporary"
+},
+"18": {
+"alt_text": "Linear electric fireplace with a log set recessed into a pink wall above a woman relaxing on a sofa with two dogs.",
+"colors": [
+"blush pink wall",
+"pink sofa",
+"yellow and blue pillows",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "recessed",
+"quality": 4,
+"room": "living_room",
+"style": "contemporary"
+},
+"180": {
+"alt_text": "Linear electric fireplace below artwork in a black marble surround between lit grey shelves.",
+"colors": [
+"black and white marble",
+"grey shelving",
+"white floor",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "tv_wall",
+"quality": 3,
+"room": "living_room",
+"style": "modern glam"
+},
+"185": {
+"alt_text": "Linear electric fireplace with pebble media built into a dark wall below three wall-mounted TVs.",
+"colors": [
+"charcoal textured wallpaper",
+"dark tile",
+"brown chair",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 3,
+"room": "other",
+"style": "moody contemporary"
+},
+"186": {
+"alt_text": "Corner electric fireplace built into a white stacked-stone wall beside a window.",
+"colors": [
+"white stacked stone",
+"beige walls",
+"white wainscot",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 3,
+"room": "living_room",
+"style": "transitional"
+},
+"187": {
+"alt_text": "Close view of an electric fireplace in a grey box surround on a black marble ledge beside a mustard armchair.",
+"colors": [
+"grey box surround",
+"black marble shelf",
+"mustard armchair",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "wall_mounted",
+"quality": 3,
+"room": "living_room",
+"style": "contemporary"
+},
+"188": {
+"alt_text": "Linear electric fireplace below a TV in a charcoal stone wall facing a grey sofa and mustard chairs.",
+"colors": [
+"charcoal stone wall",
+"grey sofa",
+"mustard chairs",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "tv_wall",
+"quality": 3,
+"room": "living_room",
+"style": "modern"
+},
+"189": {
+"alt_text": "Linear electric fireplace in a grey marble surround between lit white shelves, seen over a cream sofa.",
+"colors": [
+"grey marble surround",
+"white shelving",
+"cream sofa",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 3,
+"room": "living_room",
+"style": "modern glam"
+},
+"190": {
+"alt_text": "Close view of a linear electric fireplace set into a grey marble wall beside white shelving.",
+"colors": [
+"grey marble",
+"white shelving",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 3,
+"room": "living_room",
+"style": "modern glam"
+},
+"191": {
+"alt_text": "Linear electric fireplace in a grey slate wall below a framed painting in a chalet living room with timber beams.",
+"colors": [
+"grey slate stacked stone",
+"timber beams",
+"cream sofas",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "recessed",
+"quality": 3,
+"room": "living_room",
+"style": "alpine chalet"
+},
+"192": {
+"alt_text": "Linear electric fireplace below a TV in a white stone wall flanked by light wood panels and sconces.",
+"colors": [
+"white textured stone",
+"light wood panels",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "tv_wall",
+"quality": 3,
+"room": "living_room",
+"style": "contemporary"
+},
+"193": {
+"alt_text": "Linear electric fireplace below a TV on a white stone feature wall, seen over a tan leather sofa.",
+"colors": [
+"white stone",
+"light wood panels",
+"tan leather sofa",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "tv_wall",
+"quality": 3,
+"room": "living_room",
+"style": "contemporary"
+},
+"194": {
+"alt_text": "Linear electric fireplace below a TV on a stone wall in a living room with orange chairs and an ocean view.",
+"colors": [
+"white stone",
+"light wood",
+"orange chairs",
+"ocean view",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "tv_wall",
+"quality": 3,
+"room": "living_room",
+"style": "coastal contemporary"
+},
+"204": {
+"alt_text": "Electric fireplace insert in a grey tile surround under a white mantel beside a cream armchair.",
+"colors": [
+"grey tile surround",
+"white mantel",
+"cream armchair",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 3,
+"room": "living_room",
+"style": "transitional"
+},
+"205": {
+"alt_text": "Electric fireplace insert in a whitewashed stone chimney between two grey armchairs and round mirrors.",
+"colors": [
+"whitewashed stone",
+"white mantel shelf",
+"grey armchairs",
+"black sconces",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 3,
+"room": "living_room",
+"style": "transitional"
+},
+"228": {
+"alt_text": "Linear electric fireplace set into a grey flagstone wall below a wood mantel shelf beside a charcoal sofa.",
+"colors": [
+"grey flagstone wall",
+"wood mantel shelf",
+"charcoal sofa",
+"yellow flame"
+],
+"confidence": "medium",
+"mounting": "recessed",
+"quality": 4,
+"room": "living_room",
+"style": "rustic modern"
+},
+"229": {
+"alt_text": "Linear electric fireplace recessed into a red brick wall below a shelf, next to a cream chaise lounge.",
+"colors": [
+"red brick wall",
+"cream chaise",
+"white curtains",
+"yellow flame"
+],
+"confidence": "medium",
+"mounting": "recessed",
+"quality": 4,
+"room": "bedroom",
+"style": "industrial"
+},
+"230": {
+"alt_text": "Long linear electric fireplace in a taupe tile wall facing curved blush sofas, with a snowy mountain view.",
+"colors": [
+"taupe tile wall",
+"blush curved sofas",
+"mountain view",
+"yellow flame"
+],
+"confidence": "medium",
+"mounting": "recessed",
+"quality": 4,
+"room": "living_room",
+"style": "contemporary"
+},
+"231": {
+"alt_text": "Linear electric fireplace in a charcoal paneled wall below a TV, seen from a bed with a houndstooth throw.",
+"colors": [
+"charcoal geometric paneling",
+"beige bedding",
+"yellow flame"
+],
+"confidence": "medium",
+"mounting": "tv_wall",
+"quality": 4,
+"room": "bedroom",
+"style": "contemporary"
+},
+"232": {
+"alt_text": "Linear electric fireplace below a wood mantel shelf on a grey paneled bedroom wall at dusk.",
+"colors": [
+"grey paneled wall",
+"wood mantel shelf",
+"grey bedding",
+"yellow flame"
+],
+"confidence": "medium",
+"mounting": "recessed",
+"quality": 4,
+"room": "bedroom",
+"style": "transitional"
+},
+"233": {
+"alt_text": "Long linear electric fireplace set into a navy geometric-paneled wall behind a beige sofa.",
+"colors": [
+"navy geometric paneling",
+"wood trim",
+"beige sofa",
+"yellow flame"
+],
+"confidence": "medium",
+"mounting": "recessed",
+"quality": 4,
+"room": "living_room",
+"style": "contemporary"
+},
+"234": {
+"alt_text": "Linear electric fireplace in a dark paneled wall facing a beige sectional and ottoman in the evening.",
+"colors": [
+"dark taupe paneling",
+"beige sofa",
+"brass lamp",
+"yellow flame"
+],
+"confidence": "medium",
+"mounting": "recessed",
+"quality": 4,
+"room": "living_room",
+"style": "moody contemporary"
+},
+"235": {
+"alt_text": "Linear electric fireplace in a taupe surround below a TV, with bookshelves and a grey sofa.",
+"colors": [
+"taupe stone panels",
+"grey brick",
+"grey sofa",
+"yellow flame"
+],
+"confidence": "medium",
+"mounting": "tv_wall",
+"quality": 4,
+"room": "living_room",
+"style": "contemporary"
+},
+"247": {
+"alt_text": "Three-sided electric fireplace in a light oak base beside a kitchen island in an open-plan home.",
+"colors": [
+"white brick",
+"light oak",
+"white island",
+"yellow and blue flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "kitchen",
+"style": "scandinavian"
+},
+"248": {
+"alt_text": "Long electric fireplace built into an oak shelving divider in an office lounge with tall windows.",
+"colors": [
+"light oak",
+"concrete wall",
+"glass storefront",
+"purple and orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "office",
+"style": "modern"
+},
+"249": {
+"alt_text": "Linear electric fireplace set into a red brick wall in a coworking space with desks and orange seating.",
+"colors": [
+"red brick wall",
+"orange chairs",
+"black desks",
+"yellow flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "office",
+"style": "industrial"
+},
+"25": {
+"alt_text": "Electric fireplace framed by a light wood surround on a beige wall, with a dog lying on the floor below.",
+"colors": [
+"beige walls",
+"light wood surround",
+"white doors",
+"orange flame",
+"blue crystal media"
+],
+"confidence": "medium",
+"mounting": "mantel_surround",
+"quality": 4,
+"room": "other",
+"style": "scandinavian"
+},
+"250": {
+"alt_text": "Corner electric fireplace built into a white wall above a dark wood hearth beside a vase of yellow branches.",
+"colors": [
+"white plaster",
+"dark wood hearth",
+"black slats",
+"yellow flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "modern"
+},
+"251": {
+"alt_text": "Electric fireplace built into a grey stone room divider with shelving at the foot of a modern bed.",
+"colors": [
+"grey stone surround",
+"dark shelving",
+"wood panels",
+"yellow flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "bedroom",
+"style": "modern"
+},
+"252": {
+"alt_text": "Corner electric fireplace in a dark grey built-in with a bar niche beside a leather chair.",
+"colors": [
+"dark grey plaster",
+"black cabinets",
+"leather chair",
+"yellow flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "moody modern"
+},
+"253": {
+"alt_text": "Linear electric fireplace in a white marble wall with a raised hearth, seen from a bed.",
+"colors": [
+"white marble",
+"wood shelves",
+"brown bedding",
+"yellow and blue flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "bedroom",
+"style": "modern luxury"
+},
+"254": {
+"alt_text": "Linear electric fireplace in a white freestanding surround on a raised platform in a loft with bar stools.",
+"colors": [
+"white plaster",
+"timber ceiling",
+"light wood floor",
+"glass railing",
+"purple and orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "other",
+"style": "industrial loft"
+},
+"255": {
+"alt_text": "Multi-sided electric fireplace below a white marble surround in a bright apartment with a city skyline view.",
+"colors": [
+"white marble surround",
+"city view",
+"blush sofa",
+"yellow and blue flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "modern luxury"
+},
+"256": {
+"alt_text": "Electric fireplace set into a grey stacked-stone wall beside a dining table with dark chairs.",
+"colors": [
+"grey stacked stone",
+"dark dining chairs",
+"light wood floor",
+"yellow flame"
+],
+"confidence": "medium",
+"mounting": "recessed",
+"quality": 4,
+"room": "dining_room",
+"style": "contemporary"
+},
+"257": {
+"alt_text": "Corner electric fireplace in a grey plaster wall with oak slats facing two leather lounge chairs.",
+"colors": [
+"grey plaster",
+"oak slat panel",
+"leather lounge chairs",
+"yellow flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "contemporary"
+},
+"258": {
+"alt_text": "Three-sided electric fireplace in a grey marble surround beside a sofa and woven ottoman, with mountain views.",
+"colors": [
+"grey marble surround",
+"mountain view",
+"leather ottoman",
+"yellow and blue flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "modern luxury"
+},
+"259": {
+"alt_text": "Linear electric fireplace in a wood-clad island surround between curved brown sofas in a glass-walled lounge.",
+"colors": [
+"light wood surround",
+"brown curved sofas",
+"glass courtyard view",
+"yellow flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "other",
+"style": "modern luxury"
+},
+"26": {
+"alt_text": "Linear electric fireplace recessed into a dark green wall above an orange sofa in a mid-century living room.",
+"colors": [
+"dark green wall",
+"orange sofa",
+"olive armchair",
+"wood floor",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "recessed",
+"quality": 5,
+"room": "living_room",
+"style": "mid-century modern"
+},
+"260": {
+"alt_text": "Electric fireplace in a copper-toned surround on a white bedroom wall beside dark wood panels.",
+"colors": [
+"white walls",
+"copper surround",
+"dark wood panels",
+"houndstooth bedding",
+"yellow flame"
+],
+"confidence": "medium",
+"mounting": "wall_mounted",
+"quality": 4,
+"room": "bedroom",
+"style": "rustic modern"
+},
+"261": {
+"alt_text": "Three-sided electric fireplace in a grey marble surround beside a grey sofa and shaggy rug.",
+"colors": [
+"grey marble",
+"dark wood panels",
+"grey sofa",
+"yellow flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "modern luxury"
+},
+"262": {
+"alt_text": "Linear electric fireplace built into a white ledge below a weathered wood wall, beside a grey sofa.",
+"colors": [
+"weathered wood wall",
+"white ledge",
+"grey sofa",
+"orange and purple flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "contemporary"
+},
+"263": {
+"alt_text": "Long multi-sided electric fireplace built into a grey concrete column beside a dark armchair and floor lamp.",
+"colors": [
+"grey concrete column",
+"dark sofa",
+"floor lamp",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "contemporary"
+},
+"264": {
+"alt_text": "Linear electric fireplace in a black marble wall below a TV in a home office with a desk and bookshelves.",
+"colors": [
+"black marble",
+"wood floor",
+"bookshelves",
+"orange and purple flame"
+],
+"confidence": "medium",
+"mounting": "tv_wall",
+"quality": 4,
+"room": "office",
+"style": "modern luxury"
+},
+"265": {
+"alt_text": "Linear electric fireplace in a dark wood surround beside a lattice screen and a dining table.",
+"colors": [
+"dark wood surround",
+"lattice screen",
+"grey dining chairs",
+"yellow flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "dining_room",
+"style": "modern"
+},
+"269": {
+"alt_text": "Linear electric fireplace in a grey marble block in a building lobby with a long beige sofa and elevators.",
+"colors": [
+"grey marble surround",
+"checkered floor",
+"beige sofa",
+"yellow flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "other",
+"style": "modern commercial"
+},
+"27": {
+"alt_text": "Linear electric fireplace recessed into a charcoal wall above a grey armchair and wood sideboard.",
+"colors": [
+"charcoal grey wall",
+"natural wood",
+"grey armchair",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "recessed",
+"quality": 4,
+"room": "living_room",
+"style": "modern"
+},
+"284": {
+"alt_text": "Water vapor electric fireplace in a white marble surround with a floating hearth beside a bed and a lake-view window.",
+"colors": [
+"white marble",
+"light wood shelves",
+"cognac leather chair",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 5,
+"room": "bedroom",
+"style": "modern luxury"
+},
+"285": {
+"alt_text": "Water vapor electric fireplace recessed into a charcoal tile wall behind a freestanding tub in a glass-walled bathroom.",
+"colors": [
+"charcoal tile wall",
+"white tub",
+"forest view",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "recessed",
+"quality": 4,
+"room": "bathroom",
+"style": "modern spa"
+},
+"286": {
+"alt_text": "Linear water vapor fireplace set into a grey stone tile wall in a bright living room with a lake view.",
+"colors": [
+"grey stone tile wall",
+"sheer curtains",
+"wood chair",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "recessed",
+"quality": 5,
+"room": "living_room",
+"style": "contemporary"
+},
+"287": {
+"alt_text": "Linear water vapor fireplace in a wood surround in a glass-walled lounge with armchairs at dusk.",
+"colors": [
+"warm wood surround",
+"stone floor",
+"forest view",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "other",
+"style": "modern lodge"
+},
+"288": {
+"alt_text": "Linear water vapor fireplace below a TV in a grey stone room divider in a bright apartment.",
+"colors": [
+"grey stone surround",
+"wood floor",
+"city view",
+"orange and blue flame"
+],
+"confidence": "medium",
+"mounting": "tv_wall",
+"quality": 4,
+"room": "living_room",
+"style": "contemporary"
+},
+"299": {
+"alt_text": "Square water vapor fireplace with logs built into a board-formed concrete wall beside a beige sofa.",
+"colors": [
+"grey concrete wall",
+"beige sofa",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "contemporary"
+},
+"3": {
+"alt_text": "Wall-mounted electric fireplace with crystal media on a dark green wall above a green velvet sofa.",
+"colors": [
+"dark green walls",
+"green velvet sofa",
+"rattan",
+"beige rug",
+"orange flame",
+"purple crystal media"
+],
+"confidence": "high",
+"mounting": "wall_mounted",
+"quality": 4,
+"room": "living_room",
+"style": "contemporary"
+},
+"300": {
+"alt_text": "Square water vapor fireplace in a stone column in a lodge living room with large windows onto a forest.",
+"colors": [
+"stone-clad column",
+"cognac leather sofa",
+"forest view",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 5,
+"room": "living_room",
+"style": "modern lodge"
+},
+"301": {
+"alt_text": "Three-sided water vapor fireplace in a rust-colored surround beside a glass wall with a mountain view.",
+"colors": [
+"rust metal-clad surround",
+"wood slats",
+"mountain view",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 5,
+"room": "living_room",
+"style": "modern"
+},
+"302": {
+"alt_text": "Corner water vapor fireplace with logs built into an oak and grey brick wall with a window seat.",
+"colors": [
+"oak slat paneling",
+"grey brick",
+"white cushions",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "scandinavian"
+},
+"303": {
+"alt_text": "Square water vapor fireplace built into a concrete wall beside an open kitchen and wood dining table.",
+"colors": [
+"grey concrete",
+"wood dining table",
+"acrylic chairs",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "kitchen",
+"style": "industrial"
+},
+"304": {
+"alt_text": "Wide water vapor fireplace set low into a warm wood wall facing a mauve sofa and tree-stump side table.",
+"colors": [
+"copper wood-veneer wall",
+"mauve sofa",
+"shag rug",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "moody modern"
+},
+"305": {
+"alt_text": "Corner water vapor fireplace in a charcoal plaster surround facing a rust sofa and leather chair.",
+"colors": [
+"charcoal plaster column",
+"rust sofa",
+"wood slats",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 5,
+"room": "living_room",
+"style": "moody modern"
+},
+"306": {
+"alt_text": "Corner water vapor fireplace built into dark oak paneling in a warmly lit room.",
+"colors": [
+"dark oak paneling",
+"grey stone floor",
+"leather bench",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "modern rustic"
+},
+"307": {
+"alt_text": "Corner water vapor fireplace in a black veined-stone wall between exposed brick and a striped armchair.",
+"colors": [
+"black veined stone",
+"exposed brick",
+"striped armchair",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "industrial luxe"
+},
+"308": {
+"alt_text": "Corner water vapor fireplace in a light wood wall beside a desk nook, seen from a bed.",
+"colors": [
+"light wood panels",
+"grey door",
+"brown bedding",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "bedroom",
+"style": "contemporary"
+},
+"309": {
+"alt_text": "Corner water vapor fireplace in a concrete-look surround beside tufted charcoal armchairs.",
+"colors": [
+"concrete-look surround",
+"black slats",
+"charcoal armchairs",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "contemporary"
+},
+"313": {
+"alt_text": "Three-sided water vapor fireplace in a white built-in surround below a large wall clock in a living room with a desk nook.",
+"colors": [
+"blush and taupe walls",
+"white surround",
+"wood floor",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "contemporary"
+},
+"314": {
+"alt_text": "Corner water vapor fireplace in a brown marble surround beside sheer curtains and a terrace door.",
+"colors": [
+"brown marble surround",
+"herringbone floor",
+"sheer curtains",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 5,
+"room": "living_room",
+"style": "modern luxury"
+},
+"322": {
+"alt_text": "Electric firebox with a realistic log set mounted low on a white wall beside a light grey sofa and copper side table.",
+"colors": [
+"white walls",
+"wood shelf",
+"copper wire decor",
+"grey sofa",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "wall_mounted",
+"quality": 4,
+"room": "living_room",
+"style": "scandinavian"
+},
+"323": {
+"alt_text": "Electric firebox set into a beige plaster wall below woven wall baskets in a spa-style bathroom.",
+"colors": [
+"beige plaster",
+"wood screen",
+"round woven baskets",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "bathroom",
+"style": "spa"
+},
+"326": {
+"alt_text": "Electric firebox with a herringbone liner in a blush pink wall beside a cognac leather sofa and city view.",
+"colors": [
+"blush pink wall",
+"abstract art",
+"cognac leather sofa",
+"city view",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "contemporary"
+},
+"328": {
+"alt_text": "Electric firebox in a herringbone tile surround under a white mantel, seen past ferns and armchairs.",
+"colors": [
+"cream walls",
+"white mantel",
+"herringbone tile surround",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "mantel_surround",
+"quality": 4,
+"room": "living_room",
+"style": "transitional"
+},
+"329": {
+"alt_text": "Electric firebox in a fieldstone chimney under a reclaimed beam mantel in a vaulted lodge room.",
+"colors": [
+"grey fieldstone",
+"reclaimed wood beam mantel",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "rustic lodge"
+},
+"33": {
+"alt_text": "Linear electric fireplace with a log set recessed into a greige wall above a taupe sofa with colorful pillows.",
+"colors": [
+"greige walls",
+"taupe sofa",
+"orange and green pillows",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "recessed",
+"quality": 5,
+"room": "living_room",
+"style": "mid-century modern"
+},
+"332": {
+"alt_text": "Electric firebox in a charcoal tile surround with a long hearth beside a cream sofa and woven leather ottoman.",
+"colors": [
+"grey concrete",
+"charcoal tile surround",
+"woven leather ottoman",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 5,
+"room": "living_room",
+"style": "contemporary"
+},
+"333": {
+"alt_text": "Electric firebox in a white brick surround flanked by white built-in shelves in a bright living room.",
+"colors": [
+"white painted brick",
+"white built-ins",
+"grey sofas",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 5,
+"room": "living_room",
+"style": "transitional"
+},
+"334": {
+"alt_text": "Electric firebox in a white stacked-stone column in a living room with large windows onto a mountain sunset.",
+"colors": [
+"white stacked stone",
+"mountain sunset view",
+"cherry floor",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "transitional"
+},
+"335": {
+"alt_text": "Electric firebox with logs set into a sage wall below a horse painting, beside a cream sofa and lamp.",
+"colors": [
+"sage grey wall",
+"horse painting",
+"cream sofa",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "wall_mounted",
+"quality": 4,
+"room": "living_room",
+"style": "traditional"
+},
+"337": {
+"alt_text": "Electric firebox with a herringbone liner in a beige tile wall below a TV, facing a white sofa and live-edge table.",
+"colors": [
+"beige tile surround",
+"white shag rug",
+"white sofa",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "transitional"
+},
+"34": {
+"alt_text": "Linear electric fireplace set into a navy paneled wall above a grey loveseat and potted plant.",
+"colors": [
+"navy blue paneled wall",
+"light wood floor",
+"grey sofa",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "recessed",
+"quality": 5,
+"room": "living_room",
+"style": "modern"
+},
+"340": {
+"alt_text": "Electric firebox in a carved cream stone mantel in a warm traditional living room with a glass coffee table.",
+"colors": [
+"cream walls",
+"carved cream stone mantel",
+"brown armchair",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "mantel_surround",
+"quality": 5,
+"room": "living_room",
+"style": "traditional"
+},
+"341": {
+"alt_text": "Electric firebox set into a grey slate wall in a spa treatment room with two massage beds and large windows.",
+"colors": [
+"grey slate tile",
+"white treatment beds",
+"birch view",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "other",
+"style": "spa"
+},
+"342": {
+"alt_text": "Electric firebox in a tall slate stacked-stone wall between maple built-in cabinets in a family room.",
+"colors": [
+"multicolor slate stacked stone",
+"maple built-ins",
+"grey sofa",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 5,
+"room": "living_room",
+"style": "craftsman"
+},
+"354": {
+"alt_text": "Water vapor flame insert set into a long white cabinet against a wood wall, photographed in warm low light.",
+"colors": [
+"warm wood wall",
+"white cabinet",
+"orange flame"
+],
+"confidence": "low",
+"mounting": "built_in",
+"quality": 2,
+"room": "living_room",
+"style": "modern"
+},
+"355": {
+"alt_text": "See-through water vapor fireplace in a grey wall with a sofa visible beyond the flames, seen across a wooden table.",
+"colors": [
+"grey plaster wall",
+"see-through opening",
+"wood table",
+"orange flame"
+],
+"confidence": "low",
+"mounting": "built_in",
+"quality": 2,
+"room": "dining_room",
+"style": "modern"
+},
+"358": {
+"alt_text": "Linear water vapor fireplace in a concrete column below an abstract painting in a loft lounge.",
+"colors": [
+"board-formed concrete",
+"abstract art",
+"cognac leather",
+"yellow flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "industrial loft"
+},
+"359": {
+"alt_text": "See-through water vapor fireplace in a cream tile room divider beside two white armchairs.",
+"colors": [
+"cream tile divider",
+"white armchairs",
+"white rug",
+"yellow flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "transitional"
+},
+"377": {
+"alt_text": "Corner water vapor fireplace in a white surround below a TV, beside a red velvet sofa and floor lamp.",
+"colors": [
+"white walls",
+"white floating bench",
+"red velvet sofa",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "contemporary"
+},
+"38": {
+"alt_text": "Three-sided electric fireplace in a black wall-mounted surround beside a rustic wooden dining table in an open-plan home.",
+"colors": [
+"white walls",
+"wood plank ceiling",
+"black surround",
+"rustic wood table",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "wall_mounted",
+"quality": 5,
+"room": "dining_room",
+"style": "rustic modern"
+},
+"39": {
+"alt_text": "Corner electric fireplace built into a cream wall beside a woman reading in a beige armchair.",
+"colors": [
+"cream walls",
+"beige armchair",
+"white shelving",
+"red-orange flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "modern"
+},
+"40": {
+"alt_text": "Electric fireplace with blue flames in a white floating surround below a wall-mounted TV on a light wood feature wall.",
+"colors": [
+"light wood feature wall",
+"white floating mantel",
+"blush sofa",
+"blue flame"
+],
+"confidence": "high",
+"mounting": "tv_wall",
+"quality": 5,
+"room": "living_room",
+"style": "modern"
+},
+"41": {
+"alt_text": "Corner electric fireplace with blue flames built into a travertine surround beside a grey sofa and nesting tables.",
+"colors": [
+"white walls",
+"travertine surround",
+"grey sofa",
+"blue flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 5,
+"room": "living_room",
+"style": "scandinavian"
+},
+"42": {
+"alt_text": "Linear electric fireplace built into a tile wall with shelving, facing a black leather sectional.",
+"colors": [
+"beige tile surround",
+"white shelves",
+"black leather sofa",
+"red-orange flame",
+"teal embers"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "transitional"
+},
+"44": {
+"alt_text": "Corner electric fireplace built into a white wall in a modern open interior with a TV cabinet.",
+"colors": [
+"white walls",
+"light wood niches",
+"black TV unit",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "modern"
+},
+"45": {
+"alt_text": "Close view of a long multi-sided electric fireplace built into a cream stone ledge, with a wall-mounted TV beside it.",
+"colors": [
+"cream walls",
+"beige stone surround",
+"TV",
+"red-orange flame"
+],
+"confidence": "medium",
+"mounting": "built_in",
+"quality": 4,
+"room": "living_room",
+"style": "modern"
+},
+"62": {
+"alt_text": "Linear electric fireplace recessed into an oak feature wall behind a freestanding stone bathtub in a minimalist bathroom.",
+"colors": [
+"grey concrete walls",
+"oak wood feature wall",
+"white stone tub",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "recessed",
+"quality": 5,
+"room": "bathroom",
+"style": "modern spa"
+},
+"63": {
+"alt_text": "Linear electric fireplace in a tiled surround below a TV, flanked by built-in shelves and dark wood cabinets.",
+"colors": [
+"beige tile surround",
+"white shelving",
+"dark wood cabinets",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "tv_wall",
+"quality": 4,
+"room": "living_room",
+"style": "transitional"
+},
+"64": {
+"alt_text": "Linear electric fireplace set low into a black slate wall beside a glass wall looking onto a white-stone courtyard.",
+"colors": [
+"black slate tile wall",
+"light oak floor",
+"white courtyard",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "recessed",
+"quality": 5,
+"room": "other",
+"style": "modern minimalist"
+},
+"65": {
+"alt_text": "Linear electric fireplace with blue flames recessed into a black wall above a dark charcoal sectional sofa.",
+"colors": [
+"black walls",
+"charcoal sectional",
+"black decor",
+"blue flame"
+],
+"confidence": "high",
+"mounting": "recessed",
+"quality": 4,
+"room": "living_room",
+"style": "moody modern"
+},
+"71": {
+"alt_text": "Linear electric fireplace in a stacked-stone column between dark wood cabinets, seen from the foot of a bed.",
+"colors": [
+"grey stacked stone",
+"dark wood cabinets",
+"cream walls",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 4,
+"room": "bedroom",
+"style": "transitional"
+},
+"72": {
+"alt_text": "Electric fireplace in a grey shiplap wall below a reclaimed wood mantel and TV, in an open lower-level family room with a bar.",
+"colors": [
+"grey shiplap",
+"white walls",
+"light wood floor",
+"grey sectional",
+"red flame"
+],
+"confidence": "medium",
+"mounting": "tv_wall",
+"quality": 4,
+"room": "basement",
+"style": "farmhouse"
+},
+"73": {
+"alt_text": "Linear electric fireplace recessed into a white brick wall beside an open kitchen.",
+"colors": [
+"white brick wall",
+"wood beam",
+"white kitchen cabinets",
+"yellow flame"
+],
+"confidence": "medium",
+"mounting": "recessed",
+"quality": 4,
+"room": "kitchen",
+"style": "modern rustic"
+},
+"74": {
+"alt_text": "Electric fireplace in a grey shiplap wall below a reclaimed wood mantel, black sconces and a TV.",
+"colors": [
+"grey shiplap",
+"reclaimed wood mantel",
+"black sconces",
+"red flame"
+],
+"confidence": "medium",
+"mounting": "tv_wall",
+"quality": 4,
+"room": "basement",
+"style": "farmhouse"
+},
+"75": {
+"alt_text": "Linear electric fireplace in a grey tile wall below a TV in a bright living room that opens onto a pool patio.",
+"colors": [
+"grey tile feature wall",
+"white walls",
+"beige sofas",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "tv_wall",
+"quality": 4,
+"room": "living_room",
+"style": "contemporary"
+},
+"92": {
+"alt_text": "Long linear electric fireplace in a dark concrete surround in a caf\u00e9 seating area with pine beams and a neon coffee sign.",
+"colors": [
+"white brick",
+"pine wood beams",
+"concrete floor",
+"neon sign",
+"yellow flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 4,
+"room": "other",
+"style": "industrial"
+},
+"93": {
+"alt_text": "Linear electric fireplace recessed into a light wood wall next to built-in bookshelves under sloped skylights.",
+"colors": [
+"light wood paneled wall",
+"bookshelves",
+"grey textiles",
+"purple and orange flame"
+],
+"confidence": "medium",
+"mounting": "recessed",
+"quality": 4,
+"room": "living_room",
+"style": "modern"
+},
+"94": {
+"alt_text": "Linear electric fireplace recessed into a cream tile wall beside a freestanding bathtub under a crystal chandelier.",
+"colors": [
+"cream glass tile",
+"wood floor",
+"white tub",
+"crystal chandelier",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "recessed",
+"quality": 4,
+"room": "bathroom",
+"style": "luxury contemporary"
+},
+"95": {
+"alt_text": "Linear electric fireplace with a light frame set into a concrete wall in an office with desks and computers.",
+"colors": [
+"concrete panel wall",
+"pine ceiling",
+"grey desks",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "recessed",
+"quality": 4,
+"room": "office",
+"style": "industrial"
+},
+"96": {
+"alt_text": "Linear electric fireplace below a TV on a dark weathered-wood partition wall.",
+"colors": [
+"dark weathered wood wall",
+"black and white photos",
+"orange flame"
+],
+"confidence": "medium",
+"mounting": "tv_wall",
+"quality": 4,
+"room": "other",
+"style": "rustic modern"
+},
+"97": {
+"alt_text": "Long linear electric fireplace built into the front of a lit onyx reception desk in a hotel lobby.",
+"colors": [
+"onyx reception desk",
+"grey stone",
+"beige tile floor",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 4,
+"room": "other",
+"style": "contemporary commercial"
+},
+"98": {
+"alt_text": "Linear electric fireplace recessed into a weathered wood wall beneath a glass partition, seen past a cream sofa and plant.",
+"colors": [
+"weathered wood panel wall",
+"glass partition",
+"cream sofa",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "recessed",
+"quality": 4,
+"room": "living_room",
+"style": "contemporary"
+},
+"99": {
+"alt_text": "Long linear electric fireplace built into the base of a slatted room divider in a city loft living room.",
+"colors": [
+"concrete walls",
+"vertical wood slat divider",
+"black leather seating",
+"marble tables",
+"orange flame"
+],
+"confidence": "high",
+"mounting": "built_in",
+"quality": 5,
+"room": "living_room",
+"style": "luxury modern"
+}
+},
+"updated": "2026-10-13T09:16:28.084600+00:00"
 }

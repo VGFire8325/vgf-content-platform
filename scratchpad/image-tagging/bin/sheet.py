@@ -7,21 +7,25 @@ inv = json.load(open(f"{D}/inventory.json"))
 n = int(sys.argv[2]) if len(sys.argv) > 2 else 16
 cell = int(sys.argv[3]) if len(sys.argv) > 3 else 400
 arg = sys.argv[1]
+TH = "thumbs800" if cell >= 700 else "thumbs"
 if arg.startswith("r"):
     g = json.load(open(f"{D}/groups.json")); reps = sorted({int(v) for v in g.values()})
+    page = int(arg[1:]); items = [inv[i] for i in reps[page*n:(page+1)*n]]; start = arg
+elif arg.startswith("q"):
+    reps = json.load(open(f"{D}/installed_reps.json"))
     page = int(arg[1:]); items = [inv[i] for i in reps[page*n:(page+1)*n]]; start = arg
 elif arg.startswith("i"):
     items = [inv[int(i)] for i in arg[1:].split(",")]; start = "i" + str(items[0]["idx"])
 else:
     start = int(arg); items = inv[start:start+n]
-cols = 4; rows = (len(items) + 3) // 4
+cols = 2 if n == 4 else 4; rows = (len(items) + cols - 1) // cols
 sheet = Image.new("RGB", (cols*cell, rows*cell), (255, 0, 255))
 font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 34) if os.path.exists("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf") else ImageFont.load_default()
 d = ImageDraw.Draw(sheet)
 for k, c in enumerate(items):
     x, y = (k % cols)*cell, (k // cols)*cell
     try:
-        im = Image.open(f"{D}/thumbs/{c['idx']}.img"); im.load()
+        im = Image.open(f"{D}/{TH}/{c['idx']}.img"); im.load()
         if im.mode in ("RGBA", "LA", "P"):
             im = im.convert("RGBA"); bg = Image.new("RGBA", im.size, (255, 0, 255, 255)); bg.alpha_composite(im); im = bg
         im = im.convert("RGB"); im.thumbnail((cell-8, cell-8))
