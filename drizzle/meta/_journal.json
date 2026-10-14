@@ -71,6 +71,13 @@
       "when": 1791922668839,
       "tag": "0009_supplier_email",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792000000000,
+      "tag": "0010_sustainable_hearth_vendor_names",
+      "breakpoints": true
     }
   ]
 }

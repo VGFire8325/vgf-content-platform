@@ -12,6 +12,9 @@ const EXPECTED: Record<string, string | null> = {
   "Dynasty Fireplaces": "dynasty",
   "European Home": "sustainable_hearth",
   "Sustainable Hearth": "sustainable_hearth",
+  // Confirmed by Brendan 2026-10-14: same supplier, same address.
+  Flamerite: "sustainable_hearth",
+  "Solution Electric Fires": "sustainable_hearth",
   "Evolution Fires": "evolution_fires",
   Litedeer: "litedeer",
   "Litedeer Homes": "litedeer",
@@ -19,9 +22,7 @@ const EXPECTED: Record<string, string | null> = {
   Touchstone: "touchstone",
   // No confirmed supplier yet: these must flag needs_attention.
   Faber: null,
-  Flamerite: null,
   "Sierra Flame": null,
-  "Solution Electric Fires": null,
   "Very Good Fireplace": null,
 };
 
@@ -60,12 +61,21 @@ test("seed matches Brendan's confirmed values", () => {
 
 test("SUPPLIER_SEED and the migration seed agree", () => {
   const sqlText = readFileSync(new URL("../../../drizzle/0007_order_fulfillment.sql", import.meta.url), "utf8");
+  // Vendor names added after the original seed, by a later data migration.
+  const addedLater: Record<string, string[]> = {
+    sustainable_hearth: ["Flamerite", "Solution Electric Fires"],
+  };
+  const laterSql = readFileSync(new URL("../../../drizzle/0010_sustainable_hearth_vendor_names.sql", import.meta.url), "utf8");
+  for (const name of addedLater.sustainable_hearth!) {
+    assert.ok(laterSql.includes(`'${name}'`), `0010 adds ${name}`);
+  }
   for (const s of SUPPLIER_SEED) {
+    const originalNames = s.vendorNames.filter((v) => !(addedLater[s.id] ?? []).includes(v));
     const row = sqlText.split("\n").find((line) => line.startsWith(`('${s.id}',`));
     assert.ok(row, `migration has no seed row for ${s.id}`);
     assert.ok(row.includes(s.orderEmail ? `'${s.orderEmail}'` : "NULL"), `${s.id} email`);
     assert.ok(row.includes(`'${s.method}'`), `${s.id} method`);
-    assert.ok(row.includes(`ARRAY[${s.vendorNames.map((v) => `'${v}'`).join(", ")}]`), `${s.id} vendor names`);
+    assert.ok(row.includes(`ARRAY[${originalNames.map((v) => `'${v}'`).join(", ")}]`), `${s.id} vendor names`);
     assert.ok(row.includes(`'${s.greeting}'`), `${s.id} greeting`);
   }
 });
