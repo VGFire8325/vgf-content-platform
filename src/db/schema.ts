@@ -546,3 +546,24 @@ export const postStats = pgTable("post_stats", {
   clicks: integer("clicks"),
   fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+// External-monitor heartbeat for social posting (Pinterest/LinkedIn),
+// 2026-10. One row per app (currently just 'content_flywheel') rather
+// than a single-row table, so a later app in this same Supabase
+// project can add its own row without a new table. Written by
+// writeHeartbeat (src/lib/heartbeat.ts) after every scheduled run of
+// the job queue — see app/api/cron/run-jobs/route.ts — which covers
+// "after every successful post" too, since posting only ever happens
+// from inside that same run. Unlike every other table in this schema,
+// this one is deliberately readable outside the app (see migration
+// 0012's RLS policies) — see the heartbeat summary for which role and
+// why no narrower one was available to scope it to.
+export const appHeartbeat = pgTable("app_heartbeat", {
+  app: text("app").primaryKey(),
+  lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+  lastPostAt: timestamp("last_post_at", { withTimezone: true }),
+  postsLast7d: integer("posts_last_7d"),
+  queuePending: integer("queue_pending"),
+  queueOldestPendingAt: timestamp("queue_oldest_pending_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
