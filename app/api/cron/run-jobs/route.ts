@@ -25,11 +25,12 @@ import {
   type LinkedinPost,
 } from "@/lib/generation";
 import { claimDueJobs, enqueueJob, markJobFailed, markJobSucceeded } from "@/lib/jobs";
+import { flagConnectionForReconnect, refreshConnection, resolveReconnectAlert } from "@/lib/connection-refresh";
 import { evaluatePinterestPinQuality } from "@/lib/pinterest-quality";
 import { PlatformAuthError, PlatformValidationError } from "@/lib/platforms/errors";
-import { createOrganizationPost, refreshLinkedInToken, uploadLinkedInImage } from "@/lib/platforms/linkedin";
-import { createInstagramCarousel, createPagePost, refreshMetaUserToken } from "@/lib/platforms/meta";
-import { createPin, findOrCreateBoard, refreshPinterestToken } from "@/lib/platforms/pinterest";
+import { createOrganizationPost, uploadLinkedInImage } from "@/lib/platforms/linkedin";
+import { createInstagramCarousel, createPagePost } from "@/lib/platforms/meta";
+import { createPin, findOrCreateBoard } from "@/lib/platforms/pinterest";
 import { selectAssetForArticle, selectAssetsForArticle, type ArticleMatchContext } from "@/lib/assets";
 import {
   DEFAULT_LINKEDIN_REPOST_GAP_DAYS,
@@ -41,11 +42,19 @@ import { renderInstagramSlide, renderPinterestPin, resolveImageSrc } from "@/lib
 import { inferAudienceTag, inferTopicTag, platformFitForArticle } from "@/lib/tagging";
 import type { PinterestTemplateId } from "@/lib/templates/pinterest";
 import { uploadRenderedImage } from "@/lib/storage";
-import { readSecret, updateSecret } from "@/lib/vault";
+import { readSecret } from "@/lib/vault";
 
 export const runtime = "nodejs";
 
 class NonRetryableJobError extends Error {}
+
+// Thrown when a publish_target's connection is already flagged
+// needing reconnect (status !== "connected"). The GET handler below
+// catches this specially and reschedules the job forward without
+// touching attempt_count/last_error, so a publish blocked on a human
+// reconnect click can wait indefinitely instead of exhausting
+// publish_post's normal backoff into failed_final.
+class HoldForReconnectError extends Error {}
 
 // A content item's suggestedBoard matching this exact name (case-
 // sensitive, deliberately not fuzzy) is the one signal that tells the
@@ -585,46 +594,19 @@ async function handleNonAuthFailure(publishTargetId: string, contentItemId: stri
 
 // Exactly one refresh attempt per docs/PHASE_0_PLAN.md §5 — returns the
 // new access token on success, or null if refresh doesn't apply / fails,
-// which the caller treats as "give up, mark expired."
+// which the caller treats as "give up, mark expired." Token rotation
+// itself lives in src/lib/connection-refresh.ts, shared with the
+// proactive daily refresh cron and the pre-publish freshness guard
+// below — this is now a thin wrapper that also opens/clears the
+// "needs reconnect" alert for this connection.
 async function attemptRefresh(connection: PlatformConnectionRow): Promise<string | null> {
-  if (connection.platform === "pinterest") {
-    if (!connection.refreshTokenVaultId) return null;
-    const { PINTEREST_APP_ID, PINTEREST_APP_SECRET } = requireEnv("PINTEREST_APP_ID", "PINTEREST_APP_SECRET");
-    const refreshToken = await readSecret(db, connection.refreshTokenVaultId);
-    const tokens = await refreshPinterestToken(PINTEREST_APP_ID, PINTEREST_APP_SECRET, refreshToken);
-    await updateSecret(db, connection.accessTokenVaultId, tokens.access_token);
-    await updateSecret(db, connection.refreshTokenVaultId, tokens.refresh_token);
-    await db
-      .update(platformConnections)
-      .set({ expiresAt: new Date(Date.now() + tokens.expires_in * 1000) })
-      .where(eq(platformConnections.id, connection.id));
-    return tokens.access_token;
+  const result = await refreshConnection(db, connection);
+  if (result.ok) {
+    await resolveReconnectAlert(db, connection.id);
+    return result.accessToken;
   }
-  if (connection.platform === "facebook" || connection.platform === "instagram") {
-    const { META_APP_ID, META_APP_SECRET } = requireEnv("META_APP_ID", "META_APP_SECRET");
-    const currentToken = await readSecret(db, connection.accessTokenVaultId);
-    const refreshed = await refreshMetaUserToken(META_APP_ID, META_APP_SECRET, currentToken);
-    await updateSecret(db, connection.accessTokenVaultId, refreshed.access_token);
-    return refreshed.access_token;
-  }
-  if (connection.platform === "linkedin") {
-    // No refresh_token stored means this specific connection didn't get
-    // one (not necessarily a tier limitation — see the callback route's
-    // comment) — same "give up, mark expired" outcome as any other
-    // unrefreshable connection either way.
-    if (!connection.refreshTokenVaultId) return null;
-    const { LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET } = requireEnv("LINKEDIN_CLIENT_ID", "LINKEDIN_CLIENT_SECRET");
-    const refreshToken = await readSecret(db, connection.refreshTokenVaultId);
-    const tokens = await refreshLinkedInToken(LINKEDIN_CLIENT_ID, LINKEDIN_CLIENT_SECRET, refreshToken);
-    await updateSecret(db, connection.accessTokenVaultId, tokens.access_token);
-    if (tokens.refresh_token) {
-      await updateSecret(db, connection.refreshTokenVaultId, tokens.refresh_token);
-    }
-    await db
-      .update(platformConnections)
-      .set({ expiresAt: new Date(Date.now() + tokens.expires_in * 1000) })
-      .where(eq(platformConnections.id, connection.id));
-    return tokens.access_token;
+  if (result.reason === "no_refresh_token" || result.reason === "rejected") {
+    await flagConnectionForReconnect(db, connection, result);
   }
   return null;
 }
@@ -639,9 +621,30 @@ async function runPublishPost(job: Job) {
     return; // edited after scheduling — nothing to publish, not an error
   }
 
+  const [connection] = await db
+    .select()
+    .from(platformConnections)
+    .where(eq(platformConnections.id, target.platformConnectionId))
+    .limit(1);
+  if (!connection) throw new NonRetryableJobError(`platform_connection ${target.platformConnectionId} not found`);
+
+  // A connection already flagged needing reconnect blocks this publish
+  // without burning the 24h staleness clock below or the job's own
+  // retry budget — losing a human reconnect click shouldn't also lose
+  // the content item. The GET handler catches HoldForReconnectError
+  // and reschedules this job forward untouched; it resumes once the
+  // OAuth callback flips the connection back to "connected".
+  if (connection.status !== "connected") {
+    throw new HoldForReconnectError(
+      `${connection.platform} connection not connected (status: ${connection.status}) — held for reconnect`,
+    );
+  }
+
   // §5: independent of the job-level attempt budget, a publish_target
   // that's been due for over 24 hours without succeeding stops
-  // auto-retrying — it needs Brendan's eyes, not another silent attempt.
+  // auto-retrying — it needs Brendan's eyes, not another silent
+  // attempt. Only reached once the connection itself is healthy, so
+  // this is a genuinely stuck case, not one blocked on reconnect.
   const STALE_AFTER_MS = 24 * 60 * 60 * 1000;
   if (Date.now() - target.scheduledAt.getTime() > STALE_AFTER_MS) {
     await db
@@ -661,12 +664,17 @@ async function runPublishPost(job: Job) {
   if (!item) throw new NonRetryableJobError(`content_item ${target.contentItemId} not found`);
   const [article] = await db.select().from(articles).where(eq(articles.id, item.articleId)).limit(1);
   if (!article) throw new NonRetryableJobError(`article ${item.articleId} not found`);
-  const [connection] = await db
-    .select()
-    .from(platformConnections)
-    .where(eq(platformConnections.id, target.platformConnectionId))
-    .limit(1);
-  if (!connection) throw new NonRetryableJobError(`platform_connection ${target.platformConnectionId} not found`);
+
+  // Proactive refresh: a publish never goes out on a token that's
+  // already within 24h of expiry — refresh now rather than waiting for
+  // the publish itself to fail with an auth error. Best-effort: a
+  // failure here falls through to the normal publish attempt with
+  // whatever token is currently stored, and the existing auth-error
+  // retry path below still catches a genuinely expired token.
+  const PROACTIVE_REFRESH_WINDOW_MS = 24 * 60 * 60 * 1000;
+  if (connection.expiresAt && connection.expiresAt.getTime() - Date.now() < PROACTIVE_REFRESH_WINDOW_MS) {
+    await attemptRefresh(connection);
+  }
 
   const { SHOPIFY_SHOP_DOMAIN, SHOPIFY_BLOG_HANDLE } = requireEnv("SHOPIFY_SHOP_DOMAIN", "SHOPIFY_BLOG_HANDLE");
   const link = articlePublicUrl(SHOPIFY_SHOP_DOMAIN, SHOPIFY_BLOG_HANDLE, article.handle);
@@ -845,6 +853,30 @@ async function runPublishPost(job: Job) {
   throw new NonRetryableJobError(`${connection.platform} auth expired, reconnect required`);
 }
 
+// Enqueued by app/api/cron/refresh-connections/route.ts (the proactive
+// daily sweep) for any connection within its renewal window — a
+// transient failure (5xx/network against the platform's OAuth
+// endpoint) retries on refresh_token's normal backoff; a definitive one
+// (missing or rejected refresh token) stops immediately, since retrying
+// with the same bad/absent refresh token can't ever succeed.
+async function runRefreshToken(job: Job) {
+  const { connectionId } = job.payload as { connectionId: string };
+  const [connection] = await db.select().from(platformConnections).where(eq(platformConnections.id, connectionId)).limit(1);
+  if (!connection) throw new NonRetryableJobError(`platform_connection ${connectionId} not found`);
+
+  const result = await refreshConnection(db, connection);
+  if (result.ok) {
+    await resolveReconnectAlert(db, connection.id);
+    return;
+  }
+  if (result.reason === "not_applicable") return; // nothing to refresh for this platform
+  if (result.reason === "transient") {
+    throw new Error(`${connection.platform} refresh failed transiently: ${result.message}`);
+  }
+  await flagConnectionForReconnect(db, connection, result);
+  throw new NonRetryableJobError(`${connection.platform} connection needs reconnecting (${result.reason})`);
+}
+
 async function dispatch(job: Job) {
   switch (job.jobType) {
     case "extract_article":
@@ -856,9 +888,7 @@ async function dispatch(job: Job) {
     case "publish_post":
       return runPublishPost(job);
     case "refresh_token":
-      // Auth renewal happens inline inside runPublishPost per §5, not as
-      // its own scheduled job — nothing enqueues this job type yet.
-      throw new NonRetryableJobError(`Job type '${job.jobType}' has no handler yet`);
+      return runRefreshToken(job);
     default:
       throw new NonRetryableJobError(`Unknown job type '${job.jobType}'`);
   }
@@ -882,6 +912,20 @@ export async function GET(request: Request) {
       await markJobSucceeded(db, job.id);
       results.push({ id: job.id, jobType: job.jobType, outcome: "succeeded" });
     } catch (error) {
+      if (error instanceof HoldForReconnectError) {
+        // Not a failure of the job itself — blocked on a human
+        // reconnect click. Reschedule forward without touching
+        // attempt_count/last_error so it can wait indefinitely instead
+        // of exhausting publish_post's normal backoff into
+        // failed_final; it resumes once the connection reconnects.
+        const HOLD_DELAY_MS = 60 * 60 * 1000;
+        await db
+          .update(jobs)
+          .set({ status: "pending", runAt: new Date(Date.now() + HOLD_DELAY_MS), updatedAt: new Date() })
+          .where(eq(jobs.id, job.id));
+        results.push({ id: job.id, jobType: job.jobType, outcome: "held_for_reconnect" });
+        continue;
+      }
       const nonRetryable = error instanceof NonRetryableJobError;
       const message = error instanceof Error ? error.message : String(error);
       const outcome = await markJobFailed(db, job, message, nonRetryable);

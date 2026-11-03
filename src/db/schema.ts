@@ -526,3 +526,23 @@ export const alerts = pgTable(
   },
   (table) => [uniqueIndex("alerts_open_key_unique").on(table.key).where(sql`${table.resolvedAt} is null`)],
 );
+
+// Groundwork only (2026-11): the table a later per-post engagement
+// fetcher will write to — one row per published post per fetch,
+// platform metrics (impressions/saves/clicks) as fetched, not derived.
+// Nothing writes to this table yet; no fetcher exists. Kept one-row-
+// per-fetch rather than overwriting in place so a metrics history is
+// available once something does.
+export const postStats = pgTable("post_stats", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  publishTargetId: uuid("publish_target_id")
+    .notNull()
+    .references(() => publishTargets.id, { onDelete: "cascade" }),
+  platform: platformEnum("platform").notNull(),
+  externalPostId: text("external_post_id").notNull(),
+  postedAt: timestamp("posted_at", { withTimezone: true }),
+  impressions: integer("impressions"),
+  saves: integer("saves"),
+  clicks: integer("clicks"),
+  fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
+});

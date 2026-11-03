@@ -1,6 +1,8 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { brandPolicies, platformConnections, platformEnum, shopifyConnection } from "@/db/schema";
+import { listOpenAlerts } from "@/lib/alerts";
+import { reconnectAlertKey } from "@/lib/connection-refresh";
 import { PLATFORM_CONTENT_TYPES, POLICY_MODES, POLICY_MODE_LABELS, type PolicyMode } from "@/lib/policy";
 import { updatePolicyMode } from "./actions";
 
@@ -29,6 +31,18 @@ function expiryNote(expiresAt: Date | null): string | null {
 export default async function ConnectionsPage() {
   const connections = await db.select().from(platformConnections);
   const connectionByPlatform = new Map(connections.map((c) => [c.platform, c]));
+
+  // Surfaces why an "expired" connection actually needs attention — the
+  // last refresh attempt's own failure reason, not just the bare status
+  // badge — opened by attemptRefresh/flagConnectionForReconnect
+  // (src/lib/connection-refresh.ts) whenever a token refresh is rejected
+  // or has no refresh token to use.
+  const openAlerts = await listOpenAlerts(db);
+  const reconnectMessageByConnectionId = new Map(
+    connections
+      .map((c) => [c.id, openAlerts.find((a) => a.key === reconnectAlertKey(c.id))?.message] as const)
+      .filter(([, message]) => message !== undefined),
+  );
 
   const policies = await db.select().from(brandPolicies);
   const policyByPlatform = new Map(policies.map((p) => [p.platform, p]));
@@ -87,6 +101,12 @@ export default async function ConnectionsPage() {
                         <>
                           {" — "}
                           <a href={`/api/oauth/${platform}/start`}>Reconnect</a>
+                          {reconnectMessageByConnectionId.get(connection.id) && (
+                            <>
+                              <br />
+                              <small>{reconnectMessageByConnectionId.get(connection.id)}</small>
+                            </>
+                          )}
                         </>
                       )}
                     </p>

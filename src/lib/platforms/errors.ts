@@ -19,7 +19,14 @@ export class PlatformValidationError extends Error {}
 // access: "You are not permitted to access that resource" alone didn't
 // say whether that was listing boards, creating one, or creating the
 // pin). Omit it and behavior is identical to before.
-export function classifyPinterestError(status: number, body: unknown, context?: string): Error {
+// Pinterest's numeric error code (e.g. 96 = board name too long), when
+// known, is attached to the thrown Error as `pinterestCode` so a caller
+// that needs to branch on a specific code (findOrCreateBoard's code-96
+// retry) can check a property instead of parsing the `[pinterest code
+// N]` suffix out of the message string.
+export type PinterestClassifiedError = Error & { pinterestCode?: number };
+
+export function classifyPinterestError(status: number, body: unknown, context?: string): PinterestClassifiedError {
   const base = extractMessage(body) ?? `Pinterest API error (HTTP ${status})`;
   // Pinterest's own numeric error code (e.g. 29 = "not permitted") is
   // only surfaced alongside `context` — bare classifyPinterestError
@@ -28,13 +35,16 @@ export function classifyPinterestError(status: number, body: unknown, context?: 
   const code = context ? extractCode(body) : undefined;
   const withCode = code !== undefined ? `${base} [pinterest code ${code}]` : base;
   const message = context ? `${context}: ${withCode}` : base;
-  if (status === 401 || status === 403) {
-    return new PlatformAuthError(message);
+  const err: PinterestClassifiedError =
+    status === 401 || status === 403
+      ? new PlatformAuthError(message)
+      : status === 400 || status === 422
+        ? new PlatformValidationError(message)
+        : new Error(message); // 5xx/429/network — retryable per §5
+  if (code !== undefined) {
+    err.pinterestCode = code;
   }
-  if (status === 400 || status === 422) {
-    return new PlatformValidationError(message);
-  }
-  return new Error(message); // 5xx/429/network — retryable per §5
+  return err;
 }
 
 // Meta Graph API OAuth error codes worth treating as "needs reconnect"

@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { platformConnections } from "@/db/schema";
+import { resolveReconnectAlert } from "@/lib/connection-refresh";
 import { requireEnv } from "@/lib/env";
 import { PINTEREST_SCOPES, exchangePinterestCode } from "@/lib/platforms/pinterest";
 import { scheduleUnscheduledApprovedItems } from "@/lib/publish-scheduling";
@@ -46,6 +47,10 @@ export async function GET(request: Request) {
       .update(platformConnections)
       .set({ status: "connected", expiresAt })
       .where(eq(platformConnections.id, existing.id));
+    // Clears the "needs reconnect" alert (connection-refresh.ts) that a
+    // failed proactive/auth-retry refresh may have opened — this manual
+    // reconnect is exactly the fix that alert was asking for.
+    await resolveReconnectAlert(db, existing.id);
   } else {
     const accessTokenVaultId = await storeSecret(db, tokens.access_token, "pinterest_access_token");
     const refreshTokenVaultId = await storeSecret(db, tokens.refresh_token, "pinterest_refresh_token");

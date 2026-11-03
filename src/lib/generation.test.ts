@@ -62,6 +62,28 @@ test("pinterest schema rejects a title over 100 characters", () => {
   assert.equal(result.success, false);
 });
 
+test("pinterest schema rejects a suggestedBoard of 50+ characters (Pinterest error code 96)", () => {
+  const result = POST_SCHEMA_BY_PLATFORM.pinterest.safeParse({
+    title: "title",
+    description: "desc",
+    altText: "alt",
+    suggestedBoard: "Fireplace Installation Tips for Builders & Contractors", // 56 chars
+    imageConcept: "concept",
+  });
+  assert.equal(result.success, false);
+});
+
+test("pinterest schema accepts a suggestedBoard right at the 49-char limit", () => {
+  const result = POST_SCHEMA_BY_PLATFORM.pinterest.safeParse({
+    title: "title",
+    description: "desc",
+    altText: "alt",
+    suggestedBoard: "x".repeat(49),
+    imageConcept: "concept",
+  });
+  assert.equal(result.success, true);
+});
+
 test("instagram schema requires at least 2 slides", () => {
   const result = POST_SCHEMA_BY_PLATFORM.instagram.safeParse({
     caption: "caption",

@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { platformConnections } from "@/db/schema";
+import { resolveReconnectAlert } from "@/lib/connection-refresh";
 import { requireEnv } from "@/lib/env";
 import { LINKEDIN_SCOPES, exchangeLinkedInCode, listAdministeredOrganizations } from "@/lib/platforms/linkedin";
 import { scheduleUnscheduledApprovedItems } from "@/lib/publish-scheduling";
@@ -58,6 +59,10 @@ export async function GET(request: Request) {
       .update(platformConnections)
       .set({ status: "connected", expiresAt, externalAccountId: organization.urn, displayName: organization.name })
       .where(eq(platformConnections.id, existing.id));
+    // Clears the "needs reconnect" alert (connection-refresh.ts) that a
+    // failed proactive/auth-retry refresh may have opened — this manual
+    // reconnect is exactly the fix that alert was asking for.
+    await resolveReconnectAlert(db, existing.id);
   } else {
     const accessTokenVaultId = await storeSecret(db, tokens.access_token, "linkedin_access_token");
     // Whether a refresh_token shows up here isn't reliably tied to
