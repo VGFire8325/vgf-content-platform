@@ -9,11 +9,12 @@ import assert from "node:assert/strict";
 
 import { Resvg } from "@resvg/resvg-js";
 import { db } from "../src/db/client";
-import { articles, assetLibrary, contentAssets, contentItems, jobs, platformConnections, publishTargets } from "../src/db/schema";
+import { appHeartbeat, articles, assetLibrary, contentAssets, contentItems, jobs, platformConnections, publishTargets } from "../src/db/schema";
 import { GET as cronGet } from "../app/api/cron/run-jobs/route";
 import { syncArticleFromShopify } from "../src/lib/platforms/shopify-articles";
 import { approveContentItem, updateContentItemCopy } from "../app/review/actions";
 import { enqueueJob } from "../src/lib/jobs";
+import { HEARTBEAT_APP_ID, writeHeartbeat } from "../src/lib/heartbeat";
 
 const CRON_SECRET = process.env.CRON_SECRET!;
 
@@ -271,6 +272,33 @@ async function main() {
   assert.equal(renderJob9.outcome, "failed_retryable");
   assert.match(renderJob9.error, /SUPABASE_URL|SUPABASE_SERVICE_ROLE_KEY/);
   console.log("reached storage upload as expected, failed only on missing Supabase credentials");
+
+  console.log("--- 10. heartbeat: simulated post updates the app_heartbeat row ---");
+  // Reuses the LinkedIn publish_targets row from step 7c (still
+  // 'scheduled' — nothing later in this script reads it) and writes
+  // exactly what finalizePublished writes on a real successful publish,
+  // without a real LinkedIn API call.
+  const simulatedPublishedAt = new Date();
+  await db
+    .update(publishTargets)
+    .set({
+      status: "published",
+      publishedAt: simulatedPublishedAt,
+      externalPostId: "urn:li:share:test123",
+      externalPostUrl: "https://www.linkedin.com/feed/update/test123/",
+    })
+    .where(eq(publishTargets.id, linkedinTarget.id));
+
+  await writeHeartbeat(db);
+
+  const [heartbeatRow] = await db.select().from(appHeartbeat).where(eq(appHeartbeat.app, HEARTBEAT_APP_ID)).limit(1);
+  console.log(heartbeatRow);
+  assert.ok(heartbeatRow, "writeHeartbeat must upsert the app_heartbeat row");
+  assert.ok(heartbeatRow.lastRunAt && heartbeatRow.lastRunAt.getTime() > Date.now() - 5000, "last_run_at must be set to roughly now");
+  assert.equal(heartbeatRow.lastPostAt?.getTime(), simulatedPublishedAt.getTime(), "last_post_at must reflect the simulated post");
+  assert.ok((heartbeatRow.postsLast7d ?? 0) >= 1, "posts_last_7d must count the simulated post");
+  assert.ok((heartbeatRow.queuePending ?? 0) >= 1, "queue_pending must reflect the in_review items still in the queue");
+  assert.ok(heartbeatRow.queueOldestPendingAt, "queue_oldest_pending_at must be set while the queue is non-empty");
 
   console.log("\nALL INTEGRATION CHECKS PASSED");
 }

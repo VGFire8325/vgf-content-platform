@@ -24,6 +24,7 @@ import {
   writeAltTextForAsset,
   type LinkedinPost,
 } from "@/lib/generation";
+import { writeHeartbeat } from "@/lib/heartbeat";
 import { claimDueJobs, enqueueJob, markJobFailed, markJobSucceeded } from "@/lib/jobs";
 import { flagConnectionForReconnect, refreshConnection, resolveReconnectAlert } from "@/lib/connection-refresh";
 import { evaluatePinterestPinQuality } from "@/lib/pinterest-quality";
@@ -932,6 +933,13 @@ export async function GET(request: Request) {
       results.push({ id: job.id, jobType: job.jobType, outcome, error: message });
     }
   }
+
+  // Unconditional, even when claimed is empty — "the cron is still
+  // firing" is itself the signal an external monitor needs. Covers
+  // "after every successful post" too, since posting only ever happens
+  // from inside this loop; writeHeartbeat never throws, so this can't
+  // turn a real job failure above into a 500 for the cron caller.
+  await writeHeartbeat(db);
 
   return Response.json({ claimed: claimed.length, results });
 }
