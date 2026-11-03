@@ -34,6 +34,17 @@ test("Pinterest error without context stays exactly as before (no code, no prefi
   assert.equal(err.message, "You are not permitted to access that resource.");
 });
 
+test("Pinterest error with context attaches a structured pinterestCode property", () => {
+  const err = classifyPinterestError(400, { code: 96, message: "Name should be less than 50 characters" }, "POST /boards");
+  assert.equal(err.pinterestCode, 96);
+  assert.ok(err instanceof PlatformValidationError);
+});
+
+test("Pinterest error without context leaves pinterestCode undefined", () => {
+  const err = classifyPinterestError(400, { code: 96, message: "Name should be less than 50 characters" });
+  assert.equal(err.pinterestCode, undefined);
+});
+
 test("Meta invalid-token error (HTTP 400, OAuthException) classifies as auth, not validation", () => {
   // This is the documented Graph API quirk: token errors come back as
   // HTTP 400, not 401 — status code alone would misclassify this as a

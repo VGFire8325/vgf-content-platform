@@ -30,7 +30,10 @@ const pinterestPinSchema = z.object({
   title: z.string().min(1).max(100),
   description: z.string().min(1).max(500),
   altText: z.string().min(1),
-  suggestedBoard: z.string().min(1),
+  // Pinterest rejects board names of 50+ characters (error code 96) —
+  // 49 is the safe max; findOrCreateBoard (src/lib/platforms/pinterest.ts)
+  // also sanitizes/clamps at publish time as a second line of defense.
+  suggestedBoard: z.string().min(1).max(49),
   imageConcept: z.string().min(1),
 });
 
@@ -87,7 +90,8 @@ Return:
   hashtags, never keyword stuffing.
 - altText: a plain, literal description of what the pin's photo shows,
   for someone who can't see the image — not marketing copy.
-- suggestedBoard: a board name for this topic.
+- suggestedBoard: a board name for this topic, under 50 characters
+  (aim for 40 or less), no trailing punctuation.
 - imageConcept: what the pin graphic should show. The photo must show
   the product installed in a real room or setting — never an isolated
   studio/white-background product shot and never an AI-rendered visual.
@@ -160,7 +164,7 @@ function postJsonSchema(platform: Platform): { properties: Record<string, unknow
           title: { type: "string" },
           description: { type: "string" },
           altText: { type: "string" },
-          suggestedBoard: { type: "string" },
+          suggestedBoard: { type: "string", maxLength: 49 },
           imageConcept: { type: "string" },
         },
         required: ["title", "description", "altText", "suggestedBoard", "imageConcept"],

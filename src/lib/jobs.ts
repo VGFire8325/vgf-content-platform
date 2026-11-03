@@ -26,7 +26,7 @@ export const RETRY_POLICY: Record<JobType, { backoffMs: number[] }> = {
   generate_content: { backoffMs: [30_000, 120_000, 480_000] },
   render_image: { backoffMs: [30_000, 120_000, 480_000] },
   publish_post: { backoffMs: [60_000, 300_000, 900_000, 1_800_000, 3_600_000] }, // 1,5,15,30,60min
-  refresh_token: { backoffMs: [] }, // exactly one attempt — see §5 auth-renewal policy
+  refresh_token: { backoffMs: [300_000, 1_800_000, 7_200_000] }, // 5min, 30min, 2hr — only for transient (5xx/network) refresh failures; a definitive rejection skips straight to failed_final
 };
 
 // db.execute() runs raw SQL outside drizzle's schema-aware query

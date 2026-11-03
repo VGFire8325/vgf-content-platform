@@ -1,5 +1,31 @@
 import { classifyPinterestError } from "./errors";
 
+// Pinterest rejects board names of 50+ characters with error code 96
+// ("Name should be less than 50 characters") — 49 is the safe max.
+const BOARD_NAME_MAX = 49;
+// Fallback length used on a code-96 retry (see findOrCreateBoard) — well
+// under BOARD_NAME_MAX so a second rejection would mean something else
+// is wrong, not just length.
+const BOARD_NAME_FALLBACK_MAX = 40;
+
+// Trim, collapse internal whitespace, cut at the last word boundary at
+// or before the max length (never mid-word), then drop any trailing
+// punctuation a word-boundary cut can leave behind (e.g. "Builders &").
+export function sanitizeBoardName(name: string, maxLength: number = BOARD_NAME_MAX): string {
+  const collapsed = name.trim().replace(/\s+/g, " ");
+  if (collapsed.length <= maxLength) {
+    return stripTrailingPunctuation(collapsed);
+  }
+  const truncated = collapsed.slice(0, maxLength);
+  const lastSpace = truncated.lastIndexOf(" ");
+  const cut = lastSpace > 0 ? truncated.slice(0, lastSpace) : truncated;
+  return stripTrailingPunctuation(cut);
+}
+
+function stripTrailingPunctuation(name: string): string {
+  return name.replace(/[\s&,.;:-]+$/, "");
+}
+
 // Pinterest API v5. Request/response shapes follow Pinterest's public
 // docs; not exercised against a live call in this environment (the
 // outbound proxy blocks api.pinterest.com by policy) — see errors.ts.
@@ -111,16 +137,33 @@ export async function findOrCreateBoard(
   boardName: string,
   privacy?: "PUBLIC" | "SECRET",
 ): Promise<string> {
+  const sanitized = sanitizeBoardName(boardName, BOARD_NAME_MAX);
   const { items } = await pinterestApiRequest<{ items: PinterestBoard[] }>(accessToken, "/boards?page_size=100");
-  const existing = items.find((b) => b.name.toLowerCase() === boardName.toLowerCase());
+  const existing = items.find((b) => sanitizeBoardName(b.name, BOARD_NAME_MAX).toLowerCase() === sanitized.toLowerCase());
   if (existing) {
     return existing.id;
   }
-  const created = await pinterestApiRequest<PinterestBoard>(accessToken, "/boards", {
-    method: "POST",
-    body: JSON.stringify({ name: boardName, ...(privacy ? { privacy } : {}) }),
-  });
-  return created.id;
+  try {
+    const created = await pinterestApiRequest<PinterestBoard>(accessToken, "/boards", {
+      method: "POST",
+      body: JSON.stringify({ name: sanitized, ...(privacy ? { privacy } : {}) }),
+    });
+    return created.id;
+  } catch (err) {
+    // Code 96 ("Name should be less than 50 characters") shouldn't
+    // happen after sanitizing above, but if it does (e.g. Pinterest
+    // counting length differently for some characters), retry once with
+    // a harder truncation instead of failing outright on the first hit —
+    // only a second rejection is treated as genuinely terminal.
+    const code = (err as { pinterestCode?: number }).pinterestCode;
+    if (code !== 96) throw err;
+    const fallbackName = sanitizeBoardName(sanitized, BOARD_NAME_FALLBACK_MAX);
+    const created = await pinterestApiRequest<PinterestBoard>(accessToken, "/boards", {
+      method: "POST",
+      body: JSON.stringify({ name: fallbackName, ...(privacy ? { privacy } : {}) }),
+    });
+    return created.id;
+  }
 }
 
 export interface CreatePinInput {
