@@ -4,6 +4,7 @@ import {
   uuid,
   text,
   timestamp,
+  date,
   integer,
   jsonb,
   boolean,
@@ -177,6 +178,15 @@ export const contentItems = pgTable("content_items", {
   // when AUDIENCE_PLATFORM_PREFERENCE_ENABLED is off. Never gates
   // generation; purely informational for the reviewer.
   platformFit: text("platform_fit"),
+  // Post format / opening-hook tags (2026-11, for the monthly social-
+  // performance review) — inferred from the generated copy at
+  // generation time (see inferFormatTag/inferHookType in
+  // src/lib/tagging.ts), same plain-text-not-enum precedent as
+  // audienceTag/topicTag above. formatTag: "image-pin" | "text-only" |
+  // "carousel" | "quote" | "list". hookType: "question" | "stat" |
+  // "how-to" | "bold-claim" | "other".
+  formatTag: text("format_tag"),
+  hookType: text("hook_type"),
   // Non-blocking reasons this item was flagged for a human to check
   // before approving (Pinterest quality-gate misses, a flagged
   // deliberate-repost distinctness violation, etc.) — same
@@ -533,16 +543,45 @@ export const alerts = pgTable(
 // Nothing writes to this table yet; no fetcher exists. Kept one-row-
 // per-fetch rather than overwriting in place so a metrics history is
 // available once something does.
-export const postStats = pgTable("post_stats", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  publishTargetId: uuid("publish_target_id")
-    .notNull()
-    .references(() => publishTargets.id, { onDelete: "cascade" }),
-  platform: platformEnum("platform").notNull(),
-  externalPostId: text("external_post_id").notNull(),
-  postedAt: timestamp("posted_at", { withTimezone: true }),
-  impressions: integer("impressions"),
-  saves: integer("saves"),
-  clicks: integer("clicks"),
-  fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const postStats = pgTable(
+  "post_stats",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    publishTargetId: uuid("publish_target_id")
+      .notNull()
+      .references(() => publishTargets.id, { onDelete: "cascade" }),
+    platform: platformEnum("platform").notNull(),
+    externalPostId: text("external_post_id").notNull(),
+    postedAt: timestamp("posted_at", { withTimezone: true }),
+    impressions: integer("impressions"),
+    saves: integer("saves"),
+    clicks: integer("clicks"),
+    // 2026-11: results ingest for the monthly social-performance review
+    // (POST /api/post-stats, src/lib/post-stats.ts). outboundClicks is
+    // Pinterest-only (a pin click vs. a click through to the article);
+    // reactions/comments/reposts are LinkedIn-only; engagements is a
+    // platform-reported rollup where the source gives one. All nullable
+    // — the capture routine sends whatever that platform's analytics
+    // page actually shows, never a synthesized zero for a metric it
+    // didn't see.
+    outboundClicks: integer("outbound_clicks"),
+    reactions: integer("reactions"),
+    comments: integer("comments"),
+    reposts: integer("reposts"),
+    engagements: integer("engagements"),
+    // Where this row's numbers came from — 'manual_chrome' until
+    // anything else writes here (the Chrome-based capture routine this
+    // ingest exists for; see the task that added this table). Never
+    // read by app logic today, kept for whenever a second capture
+    // method exists and the two need telling apart.
+    captureSource: text("capture_source").notNull().default("manual_chrome"),
+    // The calendar day this snapshot represents, not when the row was
+    // inserted (that's fetchedAt) — the ingest upserts on
+    // (publishTargetId, capturedOn) so re-running the same day's
+    // capture updates in place instead of accumulating duplicate rows,
+    // while still keeping yesterday's snapshot as history.
+    capturedOn: date("captured_on").notNull().default(sql`current_date`),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("post_stats_target_captured_on_unique").on(table.publishTargetId, table.capturedOn)],
+);

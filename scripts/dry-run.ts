@@ -93,7 +93,7 @@ async function reportPendingLinkedInPosts() {
       continue;
     }
     const link = articlePublicUrl(SHOPIFY_SHOP_DOMAIN, SHOPIFY_BLOG_HANDLE, article.handle);
-    const taggedLink = withLinkedInUtm(link, article.handle);
+    const taggedLink = withLinkedInUtm(link, item.id);
     console.log(`  "${article.title}":`);
     console.log("  ---");
     console.log(

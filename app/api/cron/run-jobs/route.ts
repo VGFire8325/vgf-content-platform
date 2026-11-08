@@ -23,6 +23,7 @@ import {
   groundPosts,
   writeAltTextForAsset,
   type LinkedinPost,
+  type PlatformPost,
 } from "@/lib/generation";
 import { claimDueJobs, enqueueJob, markJobFailed, markJobSucceeded } from "@/lib/jobs";
 import { flagConnectionForReconnect, refreshConnection, resolveReconnectAlert } from "@/lib/connection-refresh";
@@ -39,7 +40,7 @@ import {
   isWithinLinkedInRepostGap,
 } from "@/lib/repost-policy";
 import { renderInstagramSlide, renderPinterestPin, resolveImageSrc } from "@/lib/render";
-import { inferAudienceTag, inferTopicTag, platformFitForArticle } from "@/lib/tagging";
+import { inferAudienceTag, inferFormatTag, inferHookType, inferTopicTag, platformFitForArticle } from "@/lib/tagging";
 import type { PinterestTemplateId } from "@/lib/templates/pinterest";
 import { uploadRenderedImage } from "@/lib/storage";
 import { readSecret } from "@/lib/vault";
@@ -123,6 +124,23 @@ async function runExtractArticle(job: Job) {
   const GENERATION_ENABLED_PLATFORMS: Platform[] = ["linkedin", "pinterest"];
   for (const platform of platforms ?? GENERATION_ENABLED_PLATFORMS) {
     await enqueueJob(db, "generate_content", { articleId: article.id, extractionId: inserted.id, platform, campaign });
+  }
+}
+
+// The one field per platform that actually carries a "hook" — same
+// per-platform dispatch claimBearingText (src/lib/generation.ts) and
+// copyPreview (app/scheduled/page.tsx) already do for their own
+// purposes, just returning the single most hook-relevant field instead
+// of everything claim-bearing or everything previewable.
+function primaryTextForPost(platform: Platform, post: PlatformPost): string {
+  switch (platform) {
+    case "pinterest":
+      return (post as { title: string }).title;
+    case "linkedin":
+    case "facebook":
+      return (post as { postText: string }).postText;
+    case "instagram":
+      return (post as { caption: string }).caption;
   }
 }
 
@@ -239,18 +257,28 @@ async function runGenerateContent(job: Job) {
   const insertedItems = await db
     .insert(contentItems)
     .values(
-      posts.map((post, i) => ({
-        articleId: article.id,
-        platform,
-        contentType,
-        copyFields: { ...post, flaggedClaims: flaggedClaimsByPost[i] ?? [] },
-        status: "in_review" as const,
-        campaign: campaign ?? null,
-        audienceTag,
-        topicTag,
-        platformFit,
-        qualityFlags: repostFlagsByPost[i] ?? [],
-      })),
+      posts.map((post, i) => {
+        const primaryText = primaryTextForPost(platform, post);
+        return {
+          articleId: article.id,
+          platform,
+          contentType,
+          copyFields: { ...post, flaggedClaims: flaggedClaimsByPost[i] ?? [] },
+          status: "in_review" as const,
+          campaign: campaign ?? null,
+          audienceTag,
+          topicTag,
+          platformFit,
+          // Post format/opening-hook tags (2026-11, for the monthly
+          // social-performance review) — same per-article-batch
+          // computation as audienceTag/topicTag above, but computed per
+          // post since the actual generated text (what decides format/
+          // hook) varies post to post, unlike the article-level tags.
+          formatTag: inferFormatTag(contentType, primaryText),
+          hookType: inferHookType(extractOpeningLine(primaryText)),
+          qualityFlags: repostFlagsByPost[i] ?? [],
+        };
+      }),
     )
     .returning();
 
@@ -766,8 +794,10 @@ async function runPublishPost(job: Job) {
       // apply to new content only") — those publish exactly as they did
       // before, untagged, rather than erroring on a field they were
       // never generated with.
-      const taggedLink = withLinkedInUtm(link, article.handle);
-      destination = copy.cta ? { url: taggedLink, utm: { source: "linkedin", medium: "social", campaign: article.handle } } : null;
+      const taggedLink = withLinkedInUtm(link, item.id);
+      destination = copy.cta
+        ? { url: taggedLink, utm: { source: "linkedin", medium: "social", campaign: "organic_posts", content: item.id } }
+        : null;
 
       return createOrganizationPost(accessToken, connection.externalAccountId, {
         text: copy.cta ? composeLinkedInPost(copy.postText, copy.cta, taggedLink) : copy.postText,

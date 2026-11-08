@@ -9,6 +9,13 @@ export type AudienceTag = "homeowner" | "trade";
 export type TopicTag = "how_to" | "comparison" | "buying_guide" | "trade";
 export type PlatformFit = "preferred" | "neutral" | "off_preference";
 
+// Format/hook tags (2026-11, for the monthly social-performance review)
+// — same "cheap deterministic heuristic, editable by a reviewer" design
+// as the Spec 4 tags above, not a model call: these only need to be a
+// reasonable first guess for post_performance_by_tag's aggregates.
+export type FormatTag = "image-pin" | "text-only" | "carousel" | "quote" | "list";
+export type HookType = "question" | "stat" | "how-to" | "bold-claim" | "other";
+
 const TRADE_AUDIENCE_KEYWORDS = [
   "contractor",
   "builder",
@@ -98,4 +105,43 @@ export function platformFitForArticle(
     return "neutral";
   }
   return "neutral";
+}
+
+// contentType alone decides format for Pinterest/Instagram, which are
+// always an image pin or an image carousel respectively — there's
+// nothing in the generated copy to look at. LinkedIn/Facebook post a
+// single block of text that may itself be shaped like a quote or a
+// list, which the copy's own opening and structure can signal; the
+// thumbnail they may or may not get is decided later at publish time
+// (an approved photo may or may not match), so it's never a factor here.
+export function inferFormatTag(
+  contentType: "pinterest_pin" | "linkedin_post" | "fb_post" | "ig_carousel",
+  primaryText: string,
+): FormatTag {
+  if (contentType === "pinterest_pin") return "image-pin";
+  if (contentType === "ig_carousel") return "carousel";
+
+  const trimmed = primaryText.trim();
+  if (/^[“"].+[”"]$/.test(trimmed)) return "quote";
+  const listLineCount = trimmed.split("\n").filter((line) => /^\s*([-*•]|\d+[.)])\s+/.test(line)).length;
+  if (listLineCount >= 2) return "list";
+  return "text-only";
+}
+
+// Opening-line pattern match (reuses extractOpeningLine's "first
+// sentence, or first line" rule — src/lib/repost-policy.ts — so a hook
+// tag and the repost-distinctness check agree on what "the opening" of
+// a post means). Order matters: "how to" is checked before the general
+// question-word list, since "how" would otherwise match there first.
+export function inferHookType(openingText: string): HookType {
+  const text = openingText.trim();
+  if (/^how to\b/i.test(text)) return "how-to";
+  if (/^\$?\d/.test(text) || /\d+%/.test(text)) return "stat";
+  if (text.endsWith("?") || /^(do|does|did|is|are|was|were|can|could|should|would|will|why|what|how|when|where|who)\b/i.test(text)) {
+    return "question";
+  }
+  if (/\b(never|always|the #1|biggest mistake|the truth about|the secret)\b/i.test(text) || /^stop\b/i.test(text)) {
+    return "bold-claim";
+  }
+  return "other";
 }

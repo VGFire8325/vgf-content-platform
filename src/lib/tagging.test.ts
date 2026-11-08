@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { inferAudienceTag, inferTopicTag, platformFitForArticle } from "./tagging";
+import { inferAudienceTag, inferFormatTag, inferHookType, inferTopicTag, platformFitForArticle } from "./tagging";
 
 test("inferAudienceTag tags a contractor-facing article as trade", () => {
   assert.equal(inferAudienceTag({ audience: "contractors and remodelers planning an install" }), "trade");
@@ -70,4 +70,57 @@ test("platformFitForArticle is neutral for a trade-audience how-to article (does
 test("platformFitForArticle is always neutral for platforms the preference doesn't cover", () => {
   assert.equal(platformFitForArticle("facebook", "homeowner", "how_to"), "neutral");
   assert.equal(platformFitForArticle("instagram", "trade", "comparison"), "neutral");
+});
+
+test("inferFormatTag always tags a Pinterest pin as image-pin, regardless of copy", () => {
+  assert.equal(inferFormatTag("pinterest_pin", "anything"), "image-pin");
+});
+
+test("inferFormatTag always tags an Instagram carousel as carousel, regardless of copy", () => {
+  assert.equal(inferFormatTag("ig_carousel", "anything"), "carousel");
+});
+
+test("inferFormatTag tags a quote-led LinkedIn post as quote", () => {
+  assert.equal(inferFormatTag("linkedin_post", '"The biggest spec mistake we see is undersizing the electrical rough-in."'), "quote");
+});
+
+test("inferFormatTag tags a bulleted LinkedIn post as list", () => {
+  const text = "Three things to check before framing:\n- Clearance to combustibles\n- Electrical rough-in\n- Venting, if gas";
+  assert.equal(inferFormatTag("linkedin_post", text), "list");
+});
+
+test("inferFormatTag tags a numbered Facebook post as list", () => {
+  const text = "Checklist:\n1. Measure the wall\n2. Confirm clearance\n3. Pick a finish";
+  assert.equal(inferFormatTag("fb_post", text), "list");
+});
+
+test("inferFormatTag falls back to text-only for plain LinkedIn/Facebook copy", () => {
+  assert.equal(inferFormatTag("linkedin_post", "Sequencing an electric fireplace install changes once trades are involved."), "text-only");
+});
+
+test("inferFormatTag doesn't call a single bullet line a list", () => {
+  assert.equal(inferFormatTag("linkedin_post", "One more thing:\n- just this one line"), "text-only");
+});
+
+test("inferHookType tags a how-to opening before the generic question check", () => {
+  assert.equal(inferHookType("How to size an electric fireplace for your wall."), "how-to");
+});
+
+test("inferHookType tags a question opening", () => {
+  assert.equal(inferHookType("Is your electric fireplace actually sized right?"), "question");
+  assert.equal(inferHookType("How much does an electric fireplace really cost to run?"), "question");
+});
+
+test("inferHookType tags a stat/number opening", () => {
+  assert.equal(inferHookType("73% of homeowners pick the wrong size the first time."), "stat");
+  assert.equal(inferHookType("$1,200 is the average cost of a bad install."), "stat");
+});
+
+test("inferHookType tags a bold-claim opening", () => {
+  assert.equal(inferHookType("Never mount a TV above an electric fireplace without checking this first."), "bold-claim");
+  assert.equal(inferHookType("Stop guessing at your fireplace size."), "bold-claim");
+});
+
+test("inferHookType falls back to other for plain statements", () => {
+  assert.equal(inferHookType("Electric fireplaces come in a range of sizes and finishes."), "other");
 });
