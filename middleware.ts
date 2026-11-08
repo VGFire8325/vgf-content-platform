@@ -9,8 +9,16 @@ const PUBLIC_PATHS = ["/login", "/auth/callback"];
 // will be, since Vercel's scheduler can't hold a Brendan-logged-in
 // browser cookie. Shopify webhooks are the same story: they authenticate
 // by HMAC signature (src/lib/orders/shopify-webhook.ts), not a session.
+// /api/post-stats is the same shape again: the separate Chrome-based
+// capture routine authenticates with its own STATS_INGEST_TOKEN bearer
+// token (src/lib/post-stats.ts), not a browser session either.
 function isPublicPath(pathname: string): boolean {
-  return PUBLIC_PATHS.includes(pathname) || pathname.startsWith("/api/cron/") || pathname.startsWith("/api/webhooks/shopify/");
+  return (
+    PUBLIC_PATHS.includes(pathname) ||
+    pathname.startsWith("/api/cron/") ||
+    pathname.startsWith("/api/webhooks/shopify/") ||
+    pathname.startsWith("/api/post-stats")
+  );
 }
 
 export async function middleware(request: NextRequest) {

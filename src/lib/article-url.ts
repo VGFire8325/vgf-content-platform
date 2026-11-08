@@ -27,14 +27,18 @@ export function withPinterestUtm(articleUrl: string, contentItemId: string): str
 }
 
 // Same idempotent tagging for LinkedIn posts (Spec 1, 2026-10 — LinkedIn
-// CTR was ~0.2% with no link-level attribution at all). utm_campaign is
-// the article's own slug (Shopify handle) per the spec, not a fixed
-// value like Pinterest's "organic_pins" — each article's LinkedIn
-// traffic is attributable on its own.
-export function withLinkedInUtm(articleUrl: string, articleSlug: string): string {
+// CTR was ~0.2% with no link-level attribution at all). Originally
+// utm_campaign was the article's own slug, tagging each article's
+// LinkedIn traffic on its own; the monthly social-performance review
+// (2026-11) needs LinkedIn tagged the same shape as Pinterest instead —
+// a fixed campaign plus utm_content carrying the content_item_id — so
+// post_performance (src/db/schema.ts) can join and compare the two
+// platforms on equal footing.
+export function withLinkedInUtm(articleUrl: string, contentItemId: string): string {
   const url = new URL(articleUrl);
   url.searchParams.set("utm_source", "linkedin");
   url.searchParams.set("utm_medium", "social");
-  url.searchParams.set("utm_campaign", articleSlug);
+  url.searchParams.set("utm_campaign", "organic_posts");
+  url.searchParams.set("utm_content", contentItemId);
   return url.toString();
 }

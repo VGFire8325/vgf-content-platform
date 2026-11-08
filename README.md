@@ -338,6 +338,26 @@ order tables between tests. Never point it at the Supabase database.
 
 ### Not built yet (hooks left in place)
 
+## Social-performance results ingest
+
+`app/api/post-stats/pending` (GET) and `app/api/post-stats` (POST) let a
+separate Chrome-based capture routine read which published Pinterest/
+LinkedIn posts need fresh analytics and write the numbers back, for the
+monthly social-performance review. Both authenticate with a bearer
+`STATS_INGEST_TOKEN` (set in Vercel's env vars, generate with `openssl
+rand -hex 32`) — not a browser session, so `middleware.ts` exempts
+`/api/post-stats/*` the same way it already exempts `/api/cron/*`.
+
+`npm test` runs the validation/auth unit tests unconditionally. The
+upsert/idempotency/pending-window tests need a throwaway Postgres and
+are skipped without one, same pattern as the order-fulfillment tests
+above:
+
+```bash
+su postgres -c "createdb vgf_poststats_test"
+POST_STATS_TEST_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:5432/vgf_poststats_test" npm test
+```
+
 Reading stock confirmation and tracking from the manufacturer's reply
 automatically, pushing tracking to Shopify, and the remaining exceptions
 (carrier can't reach the customer, out of stock). Today these are the

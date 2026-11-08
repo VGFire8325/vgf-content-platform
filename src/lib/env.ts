@@ -45,6 +45,11 @@ const envSchema = z.object({
   //   SUPPLIER_EMAIL_BCC: copy of every live supplier email (Brendan).
   SUPPLIER_EMAIL_FROM: z.string().min(1), // "Very Good Fireplaces <orders@verygoodfireplaces.com>"
   SUPPLIER_EMAIL_REPLY_TO: z.string().min(1), // where suppliers' replies go (Brendan)
+  // Results ingest for the monthly social-performance review
+  // (app/api/post-stats/*) — a bearer secret for the separate Chrome-
+  // based capture routine, same shape as CRON_SECRET above but its own
+  // value so rotating one never affects the other.
+  STATS_INGEST_TOKEN: z.string().min(1),
 });
 
 type Env = z.infer<typeof envSchema>;

@@ -85,6 +85,27 @@
       "when": 1793737478100,
       "tag": "0011_post_stats",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1794095279721,
+      "tag": "0013_content_item_format_hook_tags",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1794095594188,
+      "tag": "0014_post_stats_results_ingest",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1794095992173,
+      "tag": "0015_reporting_views",
+      "breakpoints": true
     }
   ]
 }
